@@ -74,3 +74,10 @@ export type SearchGe<
     ? SearchGe<A, T, Zr, `${P}1`>
     : SearchGe<A, T, Zr, `${P}0`>
   : P;
+
+/** Negate a non-negative number literal (0 stays 0). */
+export type NegNum<N> = N extends 0
+  ? 0
+  : `-${N & number}` extends `${infer V extends number}`
+    ? V
+    : never;

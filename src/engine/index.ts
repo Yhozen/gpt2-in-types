@@ -232,12 +232,12 @@ type PV<Row, Val> = Row[`${Val & number}` & keyof Row];
 
 /** One head: integer softmax over the cache, then sum_j p_j v_j, requantized. */
 /** @internal */
-export type AttendHead<Q, KH, VH, L> =
+export type AttendHead<Q, KH, VH, L, LI extends number> =
   Scores<RowsP<Q>, RowsN<Q>, KH> extends infer S extends Strs
     ? MaxS<S> extends infer Mx extends string
       ? { [J in keyof S]: AddS<Mx, NegS<S[J]>> } extends infer D extends Strs
-        ? Walk<Cat<ExpAll<D, L>>, L["lse" & keyof L]> extends infer Lse extends string
-          ? ProbAll<D, Lse, L> extends infer Pr extends Nums
+        ? Walk<Cat<M.ExpVec<LI, D>>, L["lse" & keyof L]> extends infer Lse extends string
+          ? M.ProbVec<LI, D, Lse> extends infer Pr extends Nums
             ? { [I in keyof Q]: RQU<SumS<Weighted<Pr, VH, I>>, L["rqO" & keyof L]> }
             : never
           : never
@@ -250,8 +250,8 @@ export type Heads<X> = M.Heads<X>;
 export type FlatHeads<H> = M.FlatHeads<H>;
 /** For head h: the h-th slice of every cached position. */
 export type Column<C, H> = { [J in keyof C]: C[J][H & keyof C[J]] };
-export type AllHeads<QH, KC, VC, L> = {
-  [H in keyof QH]: AttendHead<QH[H], Column<KC, H>, Column<VC, H>, L>;
+export type AllHeads<QH, KC, VC, L, LI extends number> = {
+  [H in keyof QH]: AttendHead<QH[H], Column<KC, H>, Column<VC, H>, L, LI>;
 };
 
 // ---------------------------------------------------------------- block
@@ -290,24 +290,21 @@ export type AppendKV<
 /** @internal */
 export type Block<L extends number, X, KV extends readonly unknown[]> =
   LayerNorm<X> extends infer Z extends Strs
-    ? RQAllN<Matvec<"q", L, Z>, Lay<L>["rqQ"]> extends infer Q extends Nums
-      ? RQAllN<Matvec<"k", L, Z>, Lay<L>["rqK"]> extends infer K extends Nums
-        ? RQAllN<Matvec<"v", L, Z>, Lay<L>["rqV"]> extends infer V extends Nums
+    ? M.RQVec<"rqQ", L, Matvec<"q", L, Z>> extends infer Q extends Nums
+      ? M.RQVec<"rqK", L, Matvec<"k", L, Z>> extends infer K extends Nums
+        ? M.RQVec<"rqV", L, Matvec<"v", L, Z>> extends infer V extends Nums
           ? AppendKV<KV, L, Heads<K>, Heads<V>> extends infer KV2 extends readonly unknown[]
             ? KV2[L] extends readonly [infer KC, infer VC]
-              ? FlatHeads<AllHeads<Heads<Q>, KC, VC, Lay<L>>> extends infer O extends Strs
-                ? AddClamped<
-                    X,
-                    RQAllU<Matvec<"proj", L, O>, Lay<L>["rqProj"]>
-                  > extends infer X2 extends Strs
-                  ? RQAllN<Matvec<"fc", L, LayerNorm<X2>>, Lay<L>["rqFc"]> extends infer G extends
-                      Nums
+              ? FlatHeads<AllHeads<Heads<Q>, KC, VC, Lay<L>, L>> extends infer O extends Strs
+                ? AddClamped<X, M.RQVec<"rqProj", L, Matvec<"proj", L, O>>> extends infer X2 extends
+                    Strs
+                  ? M.RQVec<"rqFc", L, Matvec<"fc", L, LayerNorm<X2>>> extends infer G extends Nums
                     ? {
                         [I in keyof G]: Lay<L>["gelu"][`${G[I] & number}` & keyof Lay<L>["gelu"]];
                       } extends infer H extends Strs
                       ? AddClamped<
                           X2,
-                          RQAllU<Matvec<"mlp", L, H>, Lay<L>["rqMlp"]>
+                          M.RQVec<"rqMlp", L, Matvec<"mlp", L, H>>
                         > extends infer X3 extends Strs
                         ? [X3, KV2]
                         : never
