@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1.22.0
+      - run: vp install
+      - name: Generated files are up to date
+        run: vp run compile && git diff --exit-code
+      - name: Format, lint, type check (including the engine's type-level tests)
+        run: vp run check
+      - name: Reference tests and parity with training
+        run: vp test
+      - name: Run the model in the type checker (CLI)
+        run: vp run examples
+      - name: Run the model through the language server (three hovers, one session)
+        run: vp run check:hover
