@@ -294,7 +294,7 @@ def main():
     n = int(0.9 * len(data))
     train, val = data[:n], data[n:]
 
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     model = GPT(CFG, len(chars)).to(device)
     print(f"params: {sum(p.numel() for p in model.parameters())}, device: {device}", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.0)
