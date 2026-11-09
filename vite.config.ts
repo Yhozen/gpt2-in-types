@@ -1,24 +1,16 @@
 import { defineConfig } from "vite-plus";
 
+/** Machine-generated sources: large literal tables, not worth formatting or linting. */
+const generated = ["src/model/weights.ts", "tests/types/ops.gen.ts", "examples/*.ts", "model/**"];
+
 export default defineConfig({
   staged: {
     "*": "vp check --fix",
     // Type-check the whole project (not just staged files) with tsrs.
     "*.{ts,mts,cts,tsx}": () => "tsrs --noEmit --fast",
   },
-  pack: {
-    deps: {
-      // tsdown <0.23 compatibility: resolve external dependency subpaths.
-      // Remove to preserve subpath imports as written (the new default).
-      // https://tsdown.dev/options/dependencies#deps-resolvedepsubpath
-      resolveDepSubpath: true,
-    },
-    dts: {
-      generator: "tsgo",
-    },
-    exports: true,
-  },
   lint: {
+    ignorePatterns: generated,
     options: {
       // Keep type-aware lint rules, but leave type checking to tsrs
       // (`vp run typecheck`) so there's a single source of type errors.
@@ -26,5 +18,10 @@ export default defineConfig({
       typeCheck: false,
     },
   },
-  fmt: {},
+  fmt: {
+    ignorePatterns: generated,
+  },
+  test: {
+    include: ["tests/**/*.test.ts"],
+  },
 });

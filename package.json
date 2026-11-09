@@ -1,7 +1,8 @@
 {
   "name": "gpt2-in-types",
   "version": "0.0.0",
-  "description": "GPT-2 implemented in the TypeScript type system.",
+  "private": true,
+  "description": "GPT-2 running inside the TypeScript type checker.",
   "homepage": "https://github.com/Yhozen/gpt2-in-types#readme",
   "bugs": {
     "url": "https://github.com/Yhozen/gpt2-in-types/issues"
@@ -12,24 +13,16 @@
     "type": "git",
     "url": "git+https://github.com/Yhozen/gpt2-in-types.git"
   },
-  "files": [
-    "dist"
-  ],
   "type": "module",
-  "exports": {
-    ".": "./dist/index.mjs",
-    "./package.json": "./package.json"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
-    "build": "vp pack",
-    "dev": "vp pack --watch",
+    "train": "uv run scripts/train.py",
+    "export": "node scripts/export.ts",
+    "codegen": "node scripts/gen-tables.ts && node scripts/gen-op-tests.ts",
+    "generate": "node scripts/generate.ts",
+    "examples": "tsrs -p examples --fast",
     "test": "vp test",
     "typecheck": "tsrs --noEmit --fast",
     "check": "vp check && tsrs --noEmit --fast",
-    "prepublishOnly": "vp run build",
     "prepare": "vp config"
   },
   "devDependencies": {

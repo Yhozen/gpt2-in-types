@@ -12,3 +12,7 @@ dist
 .vite
 coverage
 *.tsbuildinfo
+
+# Generated at runtime
+.run
+model/input.txt

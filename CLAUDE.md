@@ -33,3 +33,11 @@ release. Add a tool name to select part of the graph. For example, run
 ## Type Checking
 
 Type checking uses [tsrs](https://github.com/oxc-project/tsrs) (`tsrs --noEmit --fast`), not `tsc`/`tsgo`. `lint.options.typeCheck` is disabled in `vite.config.ts` so `vp check` only lints and formats; run `vp run check` (or `vp run typecheck`) to include tsrs.
+
+## Project Layout
+
+- `src/num` — type-level decimal arithmetic (little-endian digit strings). `src/gpt2/ops.ts` — NN ops on fixed-point vectors (scale 10^3). `src/gpt2/model.ts` — the tick-based state machine (`Init`, `Step`, `Output`).
+- `src/reference/fixed.ts` is the spec: every type-level op must match it digit for digit. Change both together, then `vp run codegen` and `vp run typecheck`.
+- Generated (do not hand-edit): `src/num/tables.ts`, `src/gpt2/exp-table.ts`, `tests/types/ops.gen.ts`, `src/model/weights.ts`, `examples/*.ts`.
+- `vp run examples` and `node scripts/generate.ts` run the model in the checker (tens of seconds); they are not part of `vp run check`.
+- Pitfalls: pass deferred types only into unconstrained type parameters (constrained ones trigger TS2589 at declaration); map tuples only over a bare type parameter; force tick results with `extends infer`; keep recursion tail-recursive.
