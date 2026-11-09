@@ -1,0 +1,6 @@
+#!/bin/sh
+# tsrs language server with its performance modes on (TSRS_FAST=1): about 3x
+# faster on this project's type-level computation. VS Code's TypeScript 7
+# extension starts `<js/ts.tsdk.path>/tsgo --lsp --stdio`; see .vscode/settings.json.
+export TSRS_FAST=1
+exec "$(dirname "$0")/../node_modules/tsrs/tsdk/tsgo" "$@"

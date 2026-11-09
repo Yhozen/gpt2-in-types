@@ -245,56 +245,9 @@ export type AttendHead<Q, KH, VH, L> =
       : never
     : never;
 
-/** Split a 32-vector into 4 heads of 8. */
-export type Heads<X> = X extends readonly [
-  infer A0,
-  infer A1,
-  infer A2,
-  infer A3,
-  infer A4,
-  infer A5,
-  infer A6,
-  infer A7,
-  infer B0,
-  infer B1,
-  infer B2,
-  infer B3,
-  infer B4,
-  infer B5,
-  infer B6,
-  infer B7,
-  infer C0,
-  infer C1,
-  infer C2,
-  infer C3,
-  infer C4,
-  infer C5,
-  infer C6,
-  infer C7,
-  infer D0,
-  infer D1,
-  infer D2,
-  infer D3,
-  infer D4,
-  infer D5,
-  infer D6,
-  infer D7,
-]
-  ? [
-      [A0, A1, A2, A3, A4, A5, A6, A7],
-      [B0, B1, B2, B3, B4, B5, B6, B7],
-      [C0, C1, C2, C3, C4, C5, C6, C7],
-      [D0, D1, D2, D3, D4, D5, D6, D7],
-    ]
-  : never;
-export type Flat4<H> = H extends readonly [
-  infer A extends Strs,
-  infer B extends Strs,
-  infer C extends Strs,
-  infer D extends Strs,
-]
-  ? [...A, ...B, ...C, ...D]
-  : never;
+/** Split a vector into heads, and back (generated for the model's shape). */
+export type Heads<X> = M.Heads<X>;
+export type FlatHeads<H> = M.FlatHeads<H>;
 /** For head h: the h-th slice of every cached position. */
 export type Column<C, H> = { [J in keyof C]: C[J][H & keyof C[J]] };
 export type AllHeads<QH, KC, VC, L> = {
@@ -306,25 +259,32 @@ export type AllHeads<QH, KC, VC, L> = {
 export type Lay<L extends number> = M.Layers[L];
 
 /** @internal */
-/** x + OFF as unsigned unary (|x| <= OFF): the matrices' input encoding. */
-export type Offset<X, OFF extends string> = { [K in keyof X]: AddS<X[K] & string, OFF> };
-type Off127 = ToS<127>;
-type Off63 = ToS<63>;
-type OffsetOf<N extends string> = N extends "proj" | "mlp" ? Off63 : Off127;
 export type Matvec<N extends string, L extends number, X> =
-  Offset<X, OffsetOf<N>> extends infer XO extends Strs ? M.Mat<N, L, XO> : never;
+  Split<X> extends [infer XP extends Strs, infer XN extends Strs] ? M.Mat<N, L, XP, XN> : never;
 
-/** Replace layer L's cache with [keys, values] + this position. */
-export type AppendKV<KV, L extends number, K, V> = {
-  [I in keyof KV]: I extends `${L}`
-    ? KV[I] extends readonly [
-        infer Ks extends readonly unknown[],
-        infer Vs extends readonly unknown[],
-      ]
-      ? [[...Ks, K], [...Vs, V]]
-      : never
-    : KV[I];
-};
+/**
+ * Append this position's [keys, values] to layer L's cache. Rebuilt by
+ * splicing (each element inferred, so resolved) rather than by mapping: a
+ * mapped copy would leave the other layers as lazy references to the previous
+ * cache, and those chains grow with positions x layers until they trip the
+ * depth limit.
+ */
+export type AppendKV<
+  KV,
+  L extends number,
+  K,
+  V,
+  Acc extends unknown[] = [],
+> = Acc["length"] extends L
+  ? KV extends readonly [
+      readonly [infer Ks extends readonly unknown[], infer Vs extends readonly unknown[]],
+      ...infer Rest,
+    ]
+    ? [...Acc, [[...Ks, K], [...Vs, V]], ...Rest]
+    : never
+  : KV extends readonly [infer H, ...infer R]
+    ? AppendKV<R, L, K, V, [...Acc, H]>
+    : never;
 
 /** One transformer block at one position. Returns [x, kv]. */
 /** @internal */
@@ -335,7 +295,7 @@ export type Block<L extends number, X, KV extends readonly unknown[]> =
         ? RQAllN<Matvec<"v", L, Z>, Lay<L>["rqV"]> extends infer V extends Nums
           ? AppendKV<KV, L, Heads<K>, Heads<V>> extends infer KV2 extends readonly unknown[]
             ? KV2[L] extends readonly [infer KC, infer VC]
-              ? Flat4<AllHeads<Heads<Q>, KC, VC, Lay<L>>> extends infer O extends Strs
+              ? FlatHeads<AllHeads<Heads<Q>, KC, VC, Lay<L>>> extends infer O extends Strs
                 ? AddClamped<
                     X,
                     RQAllU<Matvec<"proj", L, O>, Lay<L>["rqProj"]>
@@ -390,8 +350,8 @@ export type Argmax<
   : Best;
 /** @internal */
 export type NextToken<X, Pos extends number, Mode> =
-  Offset<LayerNorm<X>, Off127> extends infer XO extends Strs
-    ? Argmax<Mode extends "greedy" ? M.Head<XO> : AddNoise<M.Head<XO>, M.Noise[Pos]>>
+  Split<LayerNorm<X>> extends [infer XP extends Strs, infer XN extends Strs]
+    ? Argmax<Mode extends "greedy" ? M.Head<XP, XN> : AddNoise<M.Head<XP, XN>, M.Noise[Pos]>>
     : never;
 type AddNoise<A, N> = { [K in keyof A]: AddS<A[K] & string, N[K & keyof N] & string> };
 
@@ -480,3 +440,34 @@ export type Trace<
       ]
     ? Trace<Tokens, [...Pos, 0], KV2, [...Out, X]>
     : never;
+
+/**
+ * Process exactly K positions (prompt or generation), appending a token
+ * whenever the last one is reached. Finer-grained than Steps, so the CLI can
+ * also split the prompt's prefill across statements.
+ */
+export type Advance<S, K extends number, Mode = "sample"> = S extends readonly [
+  infer Tokens extends number[],
+  infer Pos extends unknown[],
+  infer KV extends readonly unknown[],
+]
+  ? RunK<Tokens, Pos, Tuple<K>, KV, Mode>
+  : never;
+type RunK<
+  Tokens extends number[],
+  Pos extends unknown[],
+  K extends unknown[],
+  KV extends readonly unknown[],
+  Mode,
+> = K extends [unknown, ...infer K2 extends unknown[]]
+  ? Pos["length"] extends M.Config["blockSize"]
+    ? [Tokens, Pos, KV]
+    : Layers<Embed<Tokens[Pos["length"]], Pos["length"]>, KV> extends [
+          infer X,
+          infer KV2 extends readonly unknown[],
+        ]
+      ? [...Pos, 0]["length"] extends Tokens["length"]
+        ? RunK<[...Tokens, NextToken<X, Pos["length"], Mode>], [...Pos, 0], K2, KV2, Mode>
+        : RunK<Tokens, [...Pos, 0], K2, KV2, Mode>
+      : never
+  : [Tokens, Pos, KV];

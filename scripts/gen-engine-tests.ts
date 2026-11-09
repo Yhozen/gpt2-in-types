@@ -20,7 +20,7 @@ for (const [t, pos] of [
   [0, 0],
   [30, 0],
   [27, 1],
-  [64, 13],
+  [62, 13],
   [12, 40],
   [45, 63],
 ] as const) {
@@ -40,8 +40,8 @@ check("Trace", `E.Trace<[${tokens.join(", ")}]>`, `[${residuals.map(vec).join(",
 
 // Whole generations, both decoding modes.
 for (const [prompt, n] of [
-  ["KING", 4],
-  ["O, ", 4],
+  ["Once", 3],
+  ["Tom ", 3],
 ] as const) {
   for (const mode of ["sample", "greedy"] as const) {
     const text = ref.decode(p, ref.generate(p, ref.encode(p, prompt), n, mode));

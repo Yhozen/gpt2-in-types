@@ -19,3 +19,5 @@ model/input.txt
 
 # Python
 __pycache__
+model/tinystories-valid.txt
+model/exp

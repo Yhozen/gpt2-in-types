@@ -25,7 +25,7 @@ export async function hover(file: string, name: string): Promise<HoverResult> {
   if (line < 0) throw new Error(`no "type ${name}" in ${file}`);
   const uri = pathToFileURL(path).href;
 
-  const server = spawn(resolve(ROOT, "node_modules/tsrs/tsdk/tsgo"), ["--lsp", "--stdio"], {
+  const server = spawn(resolve(ROOT, process.env.TSDK ?? "tsdk/tsgo"), ["--lsp", "--stdio"], {
     cwd: ROOT,
   });
   let buffer = Buffer.alloc(0);

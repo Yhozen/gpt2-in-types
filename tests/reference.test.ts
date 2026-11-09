@@ -71,7 +71,7 @@ describe("integer ops", () => {
   });
 
   test("layerNorm output is centered, scaled and clamped", () => {
-    const x = Array.from({ length: 32 }, (_, i) => ((i * 37) % 200) - 100);
+    const x = Array.from({ length: p.config.n_embd }, (_, i) => ((i * 37) % 200) - 100);
     const z = layerNorm(x, p);
     expect(z.every((v) => Math.abs(v) <= Z_MAX)).toBe(true);
     const mean = z.reduce((a, v) => a + v, 0) / z.length;
@@ -92,19 +92,19 @@ describe("integer ops", () => {
 
 describe("generation", () => {
   test("residual stream stays in range", () => {
-    const out = generate(p, encode(p, "ROMEO:"), 30);
-    expect(out.length).toBe(36);
+    const out = generate(p, encode(p, "Once"), 30);
+    expect(out.length).toBe(34);
     expect(R_MAX).toBe(255);
   });
 
   test("sampling is seeded and differs from greedy", () => {
-    const prompt = encode(p, "ROMEO:");
+    const prompt = encode(p, "Once upon a time");
     const a = decode(p, generate(p, prompt, 24, "sample"));
     expect(decode(p, generate(p, prompt, 24, "sample"))).toBe(a);
     expect(decode(p, generate(p, prompt, 24, "greedy"))).not.toBe(a);
   });
 
   test("stops at the context size", () => {
-    expect(generate(p, encode(p, "ROMEO:"), 500).length).toBe(p.config.block_size + 1);
+    expect(generate(p, encode(p, "Once"), 500).length).toBe(p.config.block_size + 1);
   });
 });

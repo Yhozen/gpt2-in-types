@@ -6,8 +6,8 @@ and the tooltip is the model's output:
 ```ts
 import type { Generate } from "./src/engine/index.ts";
 
-export type Text = Generate<"ROMEO:", 24>;
-//          ^? type Text = "ROMEO:\nWhe the crome the love "
+export type Text = Generate<"Once upon a time", 24, "greedy">;
+//          ^? type Text = "Once upon a time, there was a little gir"
 ```
 
 No JavaScript runs at inference time. Tokenizer, embeddings, LayerNorm,
@@ -23,22 +23,29 @@ Inspired by [GPT-2 in CSS](https://shubhampatil.dev/blog/gpt2-css).
 Measured on an Apple Silicon Mac, through the real language server
 (`node scripts/hover.ts`, which drives `tsrs --lsp` the way VS Code does):
 
-| Hover                                      | Time  | Output                                                             |
-| ------------------------------------------ | ----- | ------------------------------------------------------------------ |
-| `Generate<"ROMEO:", 24>`                   | ~2 s  | `ROMEO:⏎Whe the crome the love `                                   |
-| `Generate<"ROMEO:", 58>` (full 64 context) | ~12 s | `ROMEO:⏎Whe the crome the love thy love sie.⏎⏎⏎KI LOMMENTESTER:⏎I` |
-| `Generate<"ROMEO:", 24, "greedy">`         | ~2 s  | `ROMEO:⏎The the he sear the the`                                   |
+| Hover                                                          | Time   | Output                                                             |
+| -------------------------------------------------------------- | ------ | ------------------------------------------------------------------ |
+| `Generate<"Once upon a time", 24, "greedy">`                   | ~3.5 s | `Once upon a time, there was a little gir`                         |
+| `Generate<"Once upon a time", 24>` (sampled)                   | ~5 s   | `Once upon a time, there was a big car wa`                         |
+| `Generate<"Once upon a time", 48>` (full 64-character context) | ~9.5 s | `Once upon a time, there was a big car was so so happy and said, ` |
 
 Every output is checked digit for digit against an exact integer reference
-(`src/reference/int.ts`). The CLI-checked version of the same generation
-(`examples/romeo.ts`, split into statements, see below) takes 1.2 s / 0.4 GB
-with tsrs and 11 s / 4.7 GB with tsgo (TypeScript 7.0).
+(`src/reference/int.ts`). The CLI-checked version of the 24-character
+generation (`examples/story.ts`, split into statements, see below) takes about
+4 s.
 
-The model is GPT-2's architecture at toy scale: 4 layers, 4 heads, 32
-dimensions, 64-character context, character-level, trained on Tiny
-Shakespeare (56k parameters; integer validation loss 2.13, against 1.75 for a
-float model of the same size). GPT-2 small is 124M parameters; see
-[Scaling](#scaling).
+The model is GPT-2's architecture at toy scale: 4 layers, 8 heads, 64
+dimensions, 64-character context, character-level, trained on TinyStories
+(Eldan & Li 2023, [arXiv:2305.07759](https://arxiv.org/abs/2305.07759); 211k
+parameters, integer validation loss 1.11). For comparison, the smallest
+pretrained TinyStories model (TinyStories-1M) is 64 dimensions and 8 layers
+with a 50k-token vocabulary, and GPT-2 small is 124M parameters. See
+[Experiments](#experiments) and [Scaling](#scaling).
+
+**Editor setup matters:** tsrs's performance modes (`TSRS_FAST=1`) make this
+workload about 3× faster, but the language server does not enable them by
+default. `.vscode/settings.json` points the TypeScript 7 extension at
+`tsdk/tsgo`, a two-line wrapper that sets the variable.
 
 ## How it works
 
@@ -123,7 +130,7 @@ A hover evaluates the requested type on demand, so laziness matters:
 - The CLI's 5M budget per statement is the one place where hover and CLI
   differ. The hover alias computes everything in one go. `examples/romeo.ts`,
   checked by `vp run examples`, runs the same generation as a chain of
-  `Steps<State, 6>` statements and asserts the result.
+  `Advance<State, 2>` statements (two positions each) and asserts the result.
 
 ## Usage
 
@@ -131,10 +138,10 @@ Requires Node.js 26 and pnpm (installed on demand via `devEngines`).
 
 ```sh
 vp install
-node scripts/generate.ts "JULIET:" 24          # hover via tsrs --lsp, compare to the reference
-node scripts/generate.ts "JULIET:" 24 --greedy
+node scripts/generate.ts "Tom and Lily" 24      # hover via tsrs --lsp, compare to the reference
+node scripts/generate.ts "Tom and Lily" 24 --greedy
 node scripts/hover.ts examples/hover.ts Text    # hover any type, like an editor
-vp run examples                                 # CLI check of examples/romeo.ts
+vp run examples                                 # CLI check of examples/story.ts
 vp run check                                    # format, lint, type check (incl. engine tests)
 vp test                                         # reference and compiled-table tests
 ```
@@ -145,9 +152,46 @@ In VS Code or Cursor, open `examples/hover.ts` and hover `Text`. The committed
 To retrain (needs [uv](https://docs.astral.sh/uv/)):
 
 ```sh
-vp run train     # PyTorch QAT, writes model/qat.json (~6 min on Apple Silicon)
-vp run compile   # program.json, src/model/program.ts, engine tests, examples/romeo.ts
+vp run train     # PyTorch QAT, writes model/qat.json (~10 min on Apple Silicon)
+vp run compile   # program.json, src/model/program.ts, engine tests, examples/story.ts
 ```
+
+## Experiments
+
+All runs use the same integer architecture and training recipe (1.5k float
+steps, then 12.5k integer steps with calibrated, frozen scales). Hover times are
+for the default prompt plus 24 characters with `TSRS_FAST=1`.
+
+| Data        | Layers × dims | Params | Integer val loss | Hover, 24 chars | Notes                                                                                                                      |
+| ----------- | ------------- | ------ | ---------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Shakespeare | 4 × 32        | 56k    | 2.13             | 1.4 s           | Previous default. `ROMEO:⏎Whe the crome the love `                                                                         |
+| TinyStories | 4 × 32        | 56k    | ~2.32 (stopped)  | –               | Stalled; stopped to free the GPU                                                                                           |
+| TinyStories | **4 × 64**    | 211k   | **1.11**         | **5.0 s**       | **Default.** Greedy: `Once upon a time, there was a little girl named Lily.`                                               |
+| TinyStories | 8 × 64        | 410k   | 1.04             | 7.3 s           | Best text (`Tom and Lily went to the park. They were so happy to see the`), but hovers fail past ~44 positions (see below) |
+
+What made the difference:
+
+- **The data, more than the size.** TinyStories' simple vocabulary is what the
+  TinyStories paper is about: tiny models write coherent English on it. At the
+  same 64-dimension width, Shakespeare-style text stays word salad.
+- **`TSRS_FAST=1`:** 15 s → 4.9 s for the same hover.
+- **Input encoding.** Offsetting the matrix inputs to be non-negative halves
+  the template spans, but every input string gets ~127 characters longer;
+  splitting inputs into positive and negative parts measured faster (15.0 s vs
+  18.4 s before fast mode), so the engine uses the split.
+- **KV cache rebuilt by splicing**, not mapping, so untouched layers stay
+  resolved instead of becoming chains of lazy references.
+
+Not used: the pretrained TinyStories checkpoints. Their float weights would
+need integer retraining anyway, and their 50,257-token BPE vocabulary would
+make the LM head alone ~50k rows per generated token (about 20× the whole
+per-token cost here) and require a BPE tokenizer in types.
+
+Open issue: the 8-layer model's hover returns `any` beyond roughly 44
+positions (28 generated characters work, 32 do not), with or without fast
+mode. It is not the instantiation budget, which hovers do not enforce, so it
+is most likely another depth limit; the 4-layer model works to the full
+64-character context.
 
 ## The playbook, triaged
 
@@ -175,7 +219,7 @@ neither is relied on.
 
 ## Scaling
 
-The engine costs about 300k type instantiations per position at this size,
+The engine costs about 1.2M type instantiations per position at this size (300k at 32 dimensions),
 against about 25M for this project's first, digit-arithmetic version (which
 could not be hovered at all). Matrix work grows with d², attention with
 context length. GPT-2 small (d = 768, 12 layers, 1024 context) would be

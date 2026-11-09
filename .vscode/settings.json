@@ -1,6 +1,6 @@
 {
   "js/ts.experimental.useTsgo": true,
-  "js/ts.tsdk.path": "./node_modules/tsrs/tsdk",
+  "js/ts.tsdk.path": "./tsdk",
   "editor.defaultFormatter": "oxc.oxc-vscode",
   "[javascript]": {
     "editor.defaultFormatter": "oxc.oxc-vscode"

@@ -5,7 +5,11 @@
 """
 Quantization-aware training of a tiny integer-only GPT-2 for the type checker.
 
-    uv run scripts/train.py        # writes model/qat.json
+    uv run scripts/train.py        # writes model/qat.json (~10 min on Apple Silicon)
+
+Defaults: TinyStories (Eldan & Li 2023), 4 layers, 8 heads, 64 dims, 64-char
+context. Override with DATASET=shakespeare, N_EMBD, N_HEAD, N_LAYER, BLOCK,
+QAT_ITERS, QAT_WARMUP, QAT_OUT.
 
 Architecture: GPT-2 (learned token + position embeddings, pre-LN blocks, causal
 multi-head attention, 4x GELU MLP, final LayerNorm, LM head), with every
@@ -34,6 +38,7 @@ re-derived in scripts/compile.ts; src/reference/int.ts is the exact spec.
 
 import json
 import math
+import os
 import time
 import urllib.request
 from pathlib import Path
@@ -48,7 +53,33 @@ import os as _os
 OUT = ROOT / (_os.environ.get("QAT_OUT") or "model/qat.json")
 URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
 
-CFG = dict(n_layer=4, n_head=4, n_embd=32, block_size=64)
+CFG = dict(
+    n_layer=int(os.environ.get("N_LAYER", 4)),
+    n_head=int(os.environ.get("N_HEAD", 8)),
+    n_embd=int(os.environ.get("N_EMBD", 64)),
+    block_size=int(os.environ.get("BLOCK", 64)),
+)
+DATASET = os.environ.get("DATASET", "tinystories")
+TINYSTORIES = ROOT / "model" / "tinystories-valid.txt"
+TINYSTORIES_URL = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt"
+
+
+def load_text():
+    """Tiny Shakespeare as is, or TinyStories (Eldan & Li 2023, arXiv:2305.07759)
+    normalized to a small ASCII character set."""
+    if DATASET == "shakespeare":
+        if not DATA.exists():
+            DATA.parent.mkdir(parents=True, exist_ok=True)
+            urllib.request.urlretrieve(URL, DATA)
+        return DATA.read_text()
+    if not TINYSTORIES.exists():
+        TINYSTORIES.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(TINYSTORIES_URL, TINYSTORIES)
+    t = TINYSTORIES.read_text(encoding="utf8", errors="ignore")
+    for a, b in (("<|endoftext|>", "\n"), ("\u201c", '"'), ("\u201d", '"'), ("\u2019", "'"), ("\u2018", "'"), ("\u2013", "-"), ("\u2014", "-"), ("\u2026", "...")):
+        t = t.replace(a, b)
+    keep = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,!?'\"-:;\n")
+    return "".join(c for c in t if c in keep)
 # Integer ranges (magnitudes).
 R_MAX = 255  # residual stream
 Z_MAX = 127  # LayerNorm output (resolution sigma / 32)
@@ -59,7 +90,7 @@ O_MAX = 63  # attention output (out-proj input)
 G_MAX = 63  # pre-GELU
 H_MAX = 63  # GELU output (mlp-proj input)
 
-ITERS, WARMUP_FLOAT, BATCH, LR, LR_QAT = 9000, 1500, 64, 3e-3, 1e-3
+ITERS, WARMUP_FLOAT, BATCH, LR, LR_QAT = 14000, 1500, 64, 3e-3, 1e-3
 import os
 # Debug switches (comma-separated): float_head, float_softmax, float_weights, no_act_quant
 FLAGS = set(filter(None, os.environ.get("QAT_FLAGS", "").split(",")))
@@ -253,10 +284,7 @@ class GPT(nn.Module):
 
 
 def main():
-    if not DATA.exists():
-        DATA.parent.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(URL, DATA)
-    text = DATA.read_text()
+    text = load_text()
     chars = sorted(set(text))
     stoi = {ch: i for i, ch in enumerate(chars)}
     data = torch.tensor([stoi[c] for c in text], dtype=torch.long)
