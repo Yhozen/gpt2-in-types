@@ -1,90 +1,129 @@
 # gpt2-in-types
 
-GPT-2 running inside the TypeScript type checker. No JavaScript runs at
-inference time: the forward pass, the KV cache, the sampling loop and the
-tokenizer are all type aliases, and the generated text comes out as the type
-of a value.
+GPT-2 running inside the TypeScript type checker. Hover a type in your editor
+and the tooltip is the model's output:
 
-```console
-$ node scripts/generate.ts "ROMEO:" 16
-prompt: "ROMEO:", 16 tokens, 793 ticks
+```ts
+import type { Generate } from "./src/engine/index.ts";
 
---- type checker (27.8s, 435864142 instantiations, 768544K) ---
-ROMEO:
-I will the shal
-
---- matches fixed-point reference: yes ---
---- float64 model agrees ---
+export type Text = Generate<"ROMEO:", 24>;
+//          ^? type Text = "ROMEO:\nWhe the crome the love "
 ```
 
-Inspired by [GPT-2 in CSS](https://shubhampatil.dev/blog/gpt2-css)
-([repo](https://github.com/ShubhamPatilsd/gpt2-in-css)), which made a browser's
-layout engine do the matrix math. Here the compute engine is
-[tsrs](https://github.com/oxc-project/tsrs), the Rust port of the TypeScript 7
-checker.
+No JavaScript runs at inference time. Tokenizer, embeddings, LayerNorm,
+causal multi-head attention with a KV cache, the GELU MLP, the LM head,
+sampling and the decode loop are all type aliases, evaluated by
+[tsrs](https://github.com/oxc-project/tsrs) (the Rust port of the TypeScript 7
+checker) when the editor asks for the hover.
 
-## What runs where
+Inspired by [GPT-2 in CSS](https://shubhampatil.dev/blog/gpt2-css).
 
-| Part                                                                                          | Where                                        |
-| --------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Training (PyTorch)                                                                            | `scripts/train.py`, once, offline            |
-| Float weights → fixed-point type                                                              | `scripts/export.ts`, once, offline           |
-| Tokenizer, embeddings, LayerNorm, attention, KV cache, GELU MLP, LM head, argmax, decode loop | **the type checker** (`src/gpt2`, `src/num`) |
-| Exact runtime reference (BigInt) to check it                                                  | `src/reference/fixed.ts`                     |
+## Results
 
-The architecture is GPT-2's: learned token and position embeddings, pre-LN
-blocks, causal multi-head self-attention, a 4× MLP with tanh-GELU, a final
-LayerNorm and an LM head tied to the token embedding. The size is not: this is
-a character-level model with 4 layers, 4 heads and 32 dimensions (55k
-parameters) trained on Tiny Shakespeare, against GPT-2 small's 12 layers, 12
-heads, 768 dimensions and 124M parameters. See [Scaling](#scaling).
+Measured on an Apple Silicon Mac, through the real language server
+(`node scripts/hover.ts`, which drives `tsrs --lsp` the way VS Code does):
+
+| Hover                                      | Time  | Output                                                             |
+| ------------------------------------------ | ----- | ------------------------------------------------------------------ |
+| `Generate<"ROMEO:", 24>`                   | ~2 s  | `ROMEO:⏎Whe the crome the love `                                   |
+| `Generate<"ROMEO:", 58>` (full 64 context) | ~12 s | `ROMEO:⏎Whe the crome the love thy love sie.⏎⏎⏎KI LOMMENTESTER:⏎I` |
+| `Generate<"ROMEO:", 24, "greedy">`         | ~2 s  | `ROMEO:⏎The the he sear the the`                                   |
+
+Every output is checked digit for digit against an exact integer reference
+(`src/reference/int.ts`). The CLI-checked version of the same generation
+(`examples/romeo.ts`, split into statements, see below) takes 1.2 s / 0.4 GB
+with tsrs and 11 s / 4.7 GB with tsgo (TypeScript 7.0).
+
+The model is GPT-2's architecture at toy scale: 4 layers, 4 heads, 32
+dimensions, 64-character context, character-level, trained on Tiny
+Shakespeare (56k parameters; integer validation loss 2.13, against 1.75 for a
+float model of the same size). GPT-2 small is 124M parameters; see
+[Scaling](#scaling).
 
 ## How it works
 
-**Numbers.** The type system has no floats, so every value is a fixed-point
-integer at scale 10³ (`-1.235` is stored as `-1235`). Integers are decimal digit
-strings, least significant digit first (`"-5321"`), so addition and
-multiplication can walk both operands from the front with template literal
-`infer`, using 10×10 digit lookup tables (`src/num`). Long division, Newton's
-integer square root and a digit-decomposed `exp` (e^-(i.abc) = e^-i · e^-.a ·
-e^-.0b · e^-.00c, from four small tables) cover LayerNorm, softmax and GELU.
+### The cost model of a type checker
 
-**Ticks.** TypeScript stops after about 5M type instantiations per statement
-(TS2589), and one token needs ~25M. So the model is a state machine:
-`Step<Model, S>` does one bounded piece of work and returns the next state, and
-a generated "clock" file chains the ticks, one statement each. Per position the
-ticks are: embed, then per layer qkv, one attention tick per head, output
-projection, fc, gelu, proj, and finally the LM head once the prompt is
-consumed.
+Everything follows from what is cheap and what is expensive for the checker.
+I measured these before designing the engine:
 
-```ts
-type S0 = Init<Model, "ROMEO:", 16>;
-type S1 = Step<Model, S0>;
-type S2 = Step<Model, S1>;
-// …
-export type Text = Output<Model, S793>;
-```
+| Operation                                                         | Cost                                                   |
+| ----------------------------------------------------------------- | ------------------------------------------------------ |
+| Template literal concat `` `${A}${B}` ``, any length              | ~3 instantiations                                      |
+| Prefix match `` A extends `${B}${infer R}` `` (subtract, compare) | ~3–10 instantiations; the string compare is native     |
+| Property lookup in a large object type                            | ~1–2 instantiations; the hash lookup is native         |
+| Tuple spread or tuple subtraction                                 | ~1–2 instantiations _per element_; tuples cap at 9,999 |
+| Decimal digit-by-digit arithmetic (this project's first version)  | ~700 instantiations per multiply-add                   |
 
-The checker resolves types lazily, which fights this design in two ways, and
-both show up as TS2589 rather than as wrong answers:
+And the limits: the CLI aborts a single statement after ~5M instantiations
+(TS2589), every evaluation stops at 100 levels of nesting, non-tail recursion
+at ~50 levels and tail recursion at 1000. An editor hover is not subject to
+the 5M budget (a 12M-instantiation type hovers fine) but is subject to the
+depth limit.
 
-- A value written into the next state without being read is only computed when
-  a later statement reads it, so the work piles up into one statement. Each
-  tick computes its results in `extends infer` checks first.
-- A state field that a tick leaves alone stays a reference to the previous
-  state's field. After ~100 ticks that chain exceeds the instantiation depth
-  limit. The state is a tuple, and `Step` re-reads every element of it, so each
-  state is fully concrete when its statement ends.
+So the engine represents numbers as **unary strings** (`"111"` is 3, `"-11"`
+is −2). Addition is concatenation and comparison is a prefix match, both
+native and independent of length. It never multiplies.
 
-Recursion over positions or characters is tail-recursive throughout; TypeScript
-allows ~1000 levels of tail recursion but only ~50 of the other kind.
+### An integer GPT-2 with no multiplications
 
-**Exactness.** `src/reference/fixed.ts` implements the same fixed-point
-arithmetic with BigInt and the same rounding at every step, so the type
-checker must reproduce it digit for digit. `tests/types/ops.gen.ts` checks
-every op on random inputs; the examples and `scripts/generate.ts` check whole
-generations. A float64 implementation (`src/reference/float.ts`) measures how
-far the quantized model drifts from the trained network.
+The model is trained, quantization-aware, to run as integers with only
+additions and lookups:
+
+- **Ternary weights.** Every linear layer is a BitLinear with weights in
+  {−1, 0, 1} and one absmean scale per matrix
+  ([BitNet b1.58](https://arxiv.org/abs/2402.17764), Ma et al. 2024; BitLinear
+  from [BitNet](https://arxiv.org/abs/2310.11453), Wang et al. 2023). A matrix
+  compiles to a type alias whose row _j_ is one template literal: the inputs
+  with weight +1 concatenated, minus those with weight −1. Inputs are offset
+  to be non-negative so each nonzero weight is one span, and biases are
+  constant runs of 1s. The LM head uses int4 weights, each input repeated |w|
+  times (BitNet also keeps the head at higher precision).
+- **Lookup tables instead of arithmetic.** Requantization, GELU, `exp` and the
+  softmax normalizer are monotone functions of an integer, so each one is
+  compiled into a binary decision tree of thresholds
+  (`[ToS<t>, ifLess, ifGreaterOrEqual]`). Evaluating one is a few prefix
+  matches. This is the table-lookup approach of
+  [T-MAC](https://arxiv.org/abs/2407.00088) (Wei et al., EuroSys '25) and
+  [bitnet.cpp](https://arxiv.org/abs/2502.11880), applied to the non-linear
+  ops as well.
+- **Integer-only non-linear ops with static scales**, as in
+  [I-BERT](https://arxiv.org/abs/2101.01321) (Kim et al., ICML '21) and
+  [Jacob et al. 2018](https://arxiv.org/abs/1712.05877):
+  - LayerNorm (no affine parameters): the mean comes from a threshold search.
+    σ comes from the sum of squares, accumulated as two unary limbs
+    (c² = 512·hi + lo) and looked up in a tree built from a
+    3-significant-digit square-root table. The output, `round(32·c/σ)`, comes
+    from binary long division against doublings of σ.
+  - Softmax: `e_j = round(127·exp(−d_j·u))`, `L = round(ln(Σe/127)/u)`,
+    `p_j = round(63·exp(−(d_j + L)·u))` with `d_j = max(s) − s_j`, each one a
+    tree.
+  - q/k/v use 4-bit magnitudes. Low-bit KV caches are viable per
+    [SAW-INT4](https://arxiv.org/abs/2604.19157) and
+    [TurboQuant](https://arxiv.org/abs/2504.19874); here they use plain static
+    scales with no rotation.
+- **Sampling** is Gumbel-max with a seeded noise table (temperature 0.6) added
+  to the head accumulators before the argmax. `"greedy"` skips it.
+
+Training (`scripts/train.py`) runs the exact integer forward pass with
+straight-through gradients: 1.5k float steps, then the scales are calibrated
+and frozen and 12.5k integer steps follow. `scripts/compile.ts` turns the
+result into `model/program.json` (integers and tables, for the reference) and
+`src/model/program.ts` (the same program as types).
+
+### Making it hoverable
+
+A hover evaluates the requested type on demand, so laziness matters:
+
+- Every intermediate result is forced with `extends infer X extends ...`
+  before it is stored, so nothing stays a deferred reference to earlier work.
+  Deep chains of those trip the depth limit.
+- Mapped types are only applied to bare type parameters (that is what keeps
+  tuples as tuples), and loops are tail-recursive.
+- The CLI's 5M budget per statement is the one place where hover and CLI
+  differ. The hover alias computes everything in one go. `examples/romeo.ts`,
+  checked by `vp run examples`, runs the same generation as a chain of
+  `Steps<State, 6>` statements and asserts the result.
 
 ## Usage
 
@@ -92,45 +131,55 @@ Requires Node.js 26 and pnpm (installed on demand via `devEngines`).
 
 ```sh
 vp install
-node scripts/generate.ts "JULIET:" 24   # run the model in the type checker
-vp run examples                          # check the committed example clocks
-vp run check                             # format, lint, type check (incl. op tests)
-vp test                                  # reference + quantization tests
+node scripts/generate.ts "JULIET:" 24          # hover via tsrs --lsp, compare to the reference
+node scripts/generate.ts "JULIET:" 24 --greedy
+node scripts/hover.ts examples/hover.ts Text    # hover any type, like an editor
+vp run examples                                 # CLI check of examples/romeo.ts
+vp run check                                    # format, lint, type check (incl. engine tests)
+vp test                                         # reference and compiled-table tests
 ```
+
+In VS Code or Cursor, open `examples/hover.ts` and hover `Text`. The committed
+`.vscode/settings.json` points the TypeScript 7 extension at tsrs.
 
 To retrain (needs [uv](https://docs.astral.sh/uv/)):
 
 ```sh
-vp run train      # PyTorch, writes model/weights.json
-vp run export     # writes src/model/weights.ts
-vp run codegen    # regenerates digit/exp tables and op tests
+vp run train     # PyTorch QAT, writes model/qat.json (~6 min on Apple Silicon)
+vp run compile   # program.json, src/model/program.ts, engine tests, examples/romeo.ts
 ```
 
-## Performance
+## The playbook, triaged
 
-Measured on an Apple Silicon Mac, 16 new tokens after a 6-character prompt
-(793 ticks, ~436M type instantiations), same output from both:
+How the 2025–26 inference playbook maps onto a type checker. Its "hardware" is
+a single-threaded, memoizing interpreter where lookups and string
+concatenation are cheap and everything else is not.
 
-| Checker                 | Time  | Peak memory |
-| ----------------------- | ----- | ----------- |
-| tsrs 0.23 (`--fast`)    | 28 s  | 0.75 GB     |
-| tsgo (TypeScript 7.0.2) | 118 s | 8.9 GB      |
+| Technique (papers)                                                                           | Used?               | Why                                                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Low-precision compute (BitNet b1.58; ResServe for FP4)                                       | **Yes**             | The core idea: ternary weights turn every mat-vec into concatenation. FP4 formats and residue compensation (ResServe) are GPU-specific.                                                                                                           |
+| Table lookup instead of compute (T-MAC, bitnet.cpp; Engram's O(1) lookup)                    | **Yes**             | A property lookup in an object type is a native hash lookup, the cheapest operation available. All non-linear ops are tables or trees. Engram's conditional n-gram memory itself is not implemented.                                              |
+| Low-bit KV cache (SAW-INT4, TurboQuant)                                                      | **Yes**, simplified | q/k/v with 4-bit magnitudes and static scales. Their rotations would likely recover some quality.                                                                                                                                                 |
+| Reusing computation, storage for compute (KV cache; Mooncake)                                | **Yes**, in spirit  | Positions reuse cached K/V. The checker memoizes every instantiation, and the CLI example chains statement-sized states.                                                                                                                          |
+| Sparse attention (DeepSeek-V3.2 DSA, LongCat, AttentionIndex, Multi-layer Indexer)           | No                  | With 64 positions, dense attention over the cache is cheaper than any indexer. It would matter at longer contexts.                                                                                                                                |
+| Linear or recurrent attention (Kimi Linear, Qwen3-Next)                                      | No, best next step  | Attention is why hover time grows with context (2 s at 24 tokens, 12 s at 58). A fixed-size recurrent state would make the cost per token constant, but it is a different architecture from GPT-2.                                                |
+| Speculative decoding (DSpark, EAGLE-3, DFlash)                                               | No                  | Speculation trades parallel compute for fewer sequential passes. The checker has no parallelism to spare, so verifying k drafts costs about as much as generating them. "Speculative Decoding: Performance or Illusion?" makes the general point. |
+| MoE and expert parallelism (Least-Loaded EP, wide EP)                                        | No                  | One small dense model on one thread.                                                                                                                                                                                                              |
+| Kernels and serving (FlashAttention-4, HiSparse, DualPath, async scheduling, disaggregation) | No                  | Hardware- and cluster-specific. The closest analogue is splitting work to fit a budget, as the CLI example does per statement.                                                                                                                    |
+| SIMD                                                                                         | In effect           | One template-literal instantiation adds about 20 values natively, much like one vector instruction. T-MAC's lookup tables are the SIMD table-lookup (TBL/PSHUF) idea.                                                                             |
 
-The full 64-character context (`"First Citizen:"` + 50 tokens, 2381 ticks, 1.3B
-instantiations) takes 78 s and 2.2 GB with tsrs.
-
-**Accuracy.** The type checker always matches the fixed-point reference
-exactly. The fixed-point model matches the float64 model on short continuations
-(`vp test` checks at least 8 agreeing characters for several prompts); on long
-ones greedy decoding eventually branches on a near-tie, e.g. after 28
-characters for `"First Citizen:"`.
+Every paper above was checked to exist and to say what is quoted here. Two
+claims in the playbook about DeepInfer (the +5.4% EP64 figure and
+time-budgeted chunked prefill) could not be confirmed against its README, so
+neither is relied on.
 
 ## Scaling
 
-Cost is roughly 700 instantiations per multiply-add, and tsrs does about 15–20M
-instantiations a second. GPT-2 small needs ~124M multiply-adds per token, which
-puts it at about 85 billion instantiations, over an hour of checking and far
-more memory than the checker's caches can hold, per token. Its weights as
-digit strings would also be a ~1 GB source file. The path there is the same one
-the CSS project took: cheaper arithmetic (bigger lookup tables, W8A8
-quantization), cache-friendly evaluation, and splitting the model across files.
+The engine costs about 300k type instantiations per position at this size,
+against about 25M for this project's first, digit-arithmetic version (which
+could not be hovered at all). Matrix work grows with d², attention with
+context length. GPT-2 small (d = 768, 12 layers, 1024 context) would be
+roughly 600× the matrix work per position plus far longer attention: hours per
+token, and more memory than the checker's caches can hold. Getting there would
+take a recurrent attention variant, wider tables (T-MAC-style grouping of
+several inputs per lookup), and probably splitting the model across files.

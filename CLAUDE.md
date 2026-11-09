@@ -36,8 +36,10 @@ Type checking uses [tsrs](https://github.com/oxc-project/tsrs) (`tsrs --noEmit -
 
 ## Project Layout
 
-- `src/num` — type-level decimal arithmetic (little-endian digit strings). `src/gpt2/ops.ts` — NN ops on fixed-point vectors (scale 10^3). `src/gpt2/model.ts` — the tick-based state machine (`Init`, `Step`, `Output`).
-- `src/reference/fixed.ts` is the spec: every type-level op must match it digit for digit. Change both together, then `vp run codegen` and `vp run typecheck`.
-- Generated (do not hand-edit): `src/num/tables.ts`, `src/gpt2/exp-table.ts`, `tests/types/ops.gen.ts`, `src/model/weights.ts`, `examples/*.ts`.
-- `vp run examples` and `node scripts/generate.ts` run the model in the checker (tens of seconds); they are not part of `vp run check`.
-- Pitfalls: pass deferred types only into unconstrained type parameters (constrained ones trigger TS2589 at declaration); map tuples only over a bare type parameter; force tick results with `extends infer`; keep recursion tail-recursive.
+- `src/engine/index.ts` — the type-level integer GPT-2 (`Generate`, `Start`/`Steps`/`Output`). Values are signed unary strings (`src/num/ustr.ts`).
+- `src/reference/int.ts` is the spec: the engine must match it digit for digit.
+- `scripts/train.py` (QAT, PyTorch via uv) → `model/qat.json`; `scripts/compile.ts` → `model/program.json` + `src/model/program.ts`.
+- Generated (do not hand-edit): `src/model/program.ts`, `model/program.json`, `tests/types/engine.gen.ts`, `examples/romeo.ts`. Regenerate with `vp run compile`.
+- `node scripts/hover.ts <file> <Type>` hovers through `tsrs --lsp` like an editor; `node scripts/generate.ts "PROMPT" N` hovers and compares with the reference.
+- Limits that shape the code: the CLI aborts a statement after ~5M instantiations (hover does not); depth limit 100; tuples cost per element and cap at 9,999, unary strings do not.
+- Pitfalls: map only over bare type parameters; never intersect tuples (`X & Strs`) before mapping; force results with `extends infer X extends ...`; key number lookups as `` `${n}` & keyof T ``; keep recursion tail-recursive.

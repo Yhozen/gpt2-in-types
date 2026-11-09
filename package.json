@@ -2,7 +2,7 @@
   "name": "gpt2-in-types",
   "version": "0.0.0",
   "private": true,
-  "description": "GPT-2 running inside the TypeScript type checker.",
+  "description": "GPT-2 running inside the TypeScript type checker: hover a type, get text.",
   "homepage": "https://github.com/Yhozen/gpt2-in-types#readme",
   "bugs": {
     "url": "https://github.com/Yhozen/gpt2-in-types/issues"
@@ -16,9 +16,9 @@
   "type": "module",
   "scripts": {
     "train": "uv run scripts/train.py",
-    "export": "node scripts/export.ts",
-    "codegen": "node scripts/gen-tables.ts && node scripts/gen-op-tests.ts",
+    "compile": "node scripts/compile.ts && node scripts/gen-engine-tests.ts && node scripts/generate.ts ROMEO: 24 --out examples/romeo.ts",
     "generate": "node scripts/generate.ts",
+    "hover": "node scripts/hover.ts",
     "examples": "tsrs -p examples --fast",
     "test": "vp test",
     "typecheck": "tsrs --noEmit --fast",

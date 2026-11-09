@@ -1,59 +1,110 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
 import {
-  divRound,
-  exp,
-  gelu,
-  isqrt,
+  attendHead,
+  decode,
+  encode,
+  generate,
   layerNorm,
-  roundShift,
-  softmax,
-} from "../src/reference/fixed.ts";
+  type Program,
+  R_MAX,
+  rq,
+  searchGe,
+  searchLt,
+  sqrtKey,
+  Z_MAX,
+} from "../src/reference/int.ts";
 
-const f = (v: bigint) => Number(v) / 1000;
+const p = JSON.parse(
+  readFileSync(new URL("../model/program.json", import.meta.url), "utf8"),
+) as Program;
+const nonDecreasing = (t: number[]) => t.slice(1).every((v, i) => v >= t[i]!);
 
-describe("fixed-point reference", () => {
-  test("roundShift rounds half away from zero", () => {
-    expect(roundShift(1500n, 3)).toBe(2n);
-    expect(roundShift(-1500n, 3)).toBe(-2n);
-    expect(roundShift(1499n, 3)).toBe(1n);
-  });
-
-  test("divRound rounds half away from zero", () => {
-    expect(divRound(7n, 2n)).toBe(4n);
-    expect(divRound(-7n, 2n)).toBe(-4n);
-    expect(divRound(7n, -3n)).toBe(-2n);
-  });
-
-  test("isqrt is floor(sqrt)", () => {
-    for (let v = 0n; v < 2000n; v++) {
-      const r = isqrt(v);
-      expect(r * r <= v && (r + 1n) * (r + 1n) > v).toBe(true);
+describe("threshold tables", () => {
+  test("searchGe is the largest q with a >= t[q]", () => {
+    const t = [0, 3, 3, 10, 11, 20, 20, 50];
+    for (let a = 0; a < 60; a++) {
+      const q = searchGe(a, t);
+      expect(a >= t[q]!).toBe(true);
+      expect(q === t.length - 1 || a < t[q + 1]!).toBe(true);
     }
   });
 
-  test("exp tracks Math.exp", () => {
-    for (let x = 0; x >= -9000; x -= 37) {
-      expect(Math.abs(f(exp(BigInt(x))) - Math.exp(x / 1000))).toBeLessThan(0.0015);
+  test("searchLt is the largest q with a < t[q] on a non-increasing table", () => {
+    const t = [Infinity, 40, 30, 30, 9, 5, 1, 1];
+    for (let a = 0; a < 50; a++) {
+      const q = searchLt(a, t);
+      expect(q === 0 || a < t[q]!).toBe(true);
+      expect(q === t.length - 1 || a >= t[q + 1]!).toBe(true);
     }
   });
 
-  test("gelu tracks the tanh approximation", () => {
-    const ref = (x: number) =>
-      0.5 * x * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * x ** 3)));
-    for (let x = -6000; x <= 6000; x += 41) {
-      expect(Math.abs(f(gelu(BigInt(x))) - ref(x / 1000))).toBeLessThan(0.003);
+  test("rq is symmetric", () => {
+    const t = p.layers[0]!.rqQ;
+    for (let a = 0; a < 3000; a += 37) expect(rq(-a, t) + rq(a, t)).toBe(0);
+  });
+
+  test("compiled tables are monotone and power-of-two sized", () => {
+    for (const L of p.layers) {
+      for (const t of [L.rqQ, L.rqK, L.rqV, L.lse, L.rqO, L.rqProj, L.rqFc, L.rqMlp]) {
+        expect(nonDecreasing(t)).toBe(true);
+        expect(Number.isInteger(Math.log2(t.length))).toBe(true);
+      }
+      for (const t of [L.exp, L.prob]) expect(nonDecreasing(t.slice(1).reverse())).toBe(true);
     }
+    expect(nonDecreasing(p.mean)).toBe(true);
   });
 
-  test("softmax sums to ~1", () => {
-    const p = softmax([1200n, -300n, 50n, 2000n]);
-    expect(Math.abs(Number(p.reduce((a, v) => a + v, 0n)) - 1000)).toBeLessThanOrEqual(2);
+  test("weights are ternary (head int4)", () => {
+    for (const L of p.layers)
+      for (const m of [L.q, L.k, L.v, L.proj, L.fc, L.mlp])
+        expect(m.w.flat().every((w) => w >= -1 && w <= 1)).toBe(true);
+    expect(p.head.w.flat().every((w) => w >= -7 && w <= 7)).toBe(true);
+  });
+});
+
+describe("integer ops", () => {
+  test("sqrtKey keeps 3 significant digits", () => {
+    expect(sqrtKey(0)).toBe("0");
+    expect(sqrtKey(999)).toBe("999");
+    expect(sqrtKey(123456)).toBe("123000");
   });
 
-  test("layerNorm normalizes", () => {
-    const x = [1000n, 2000n, 3000n, 4000n];
-    const one = x.map(() => 1000n);
-    const zero = x.map(() => 0n);
-    expect(layerNorm(x, one, zero).map(f)).toEqual([-1.342, -0.447, 0.447, 1.342]);
+  test("layerNorm output is centered, scaled and clamped", () => {
+    const x = Array.from({ length: 32 }, (_, i) => ((i * 37) % 200) - 100);
+    const z = layerNorm(x, p);
+    expect(z.every((v) => Math.abs(v) <= Z_MAX)).toBe(true);
+    const mean = z.reduce((a, v) => a + v, 0) / z.length;
+    const rms = Math.sqrt(z.reduce((a, v) => a + v * v, 0) / z.length);
+    expect(Math.abs(mean)).toBeLessThan(2);
+    expect(Math.abs(rms - 32)).toBeLessThan(2); // unit variance at resolution 1/32
+  });
+
+  test("attention probabilities sum to about 63", () => {
+    const L = p.layers[0]!;
+    const q = [3, -2, 5, 0, 1, -7, 2, 4];
+    const ks = Array.from({ length: 10 }, (_, j) => q.map((v, i) => ((v * (j + 1) + i) % 15) - 7));
+    const ones = ks.map(() => q.map(() => 1));
+    const sums = attendHead(L, q, ks, ones);
+    for (const s of sums) expect(Math.abs(s - 63)).toBeLessThanOrEqual(ks.length);
+  });
+});
+
+describe("generation", () => {
+  test("residual stream stays in range", () => {
+    const out = generate(p, encode(p, "ROMEO:"), 30);
+    expect(out.length).toBe(36);
+    expect(R_MAX).toBe(255);
+  });
+
+  test("sampling is seeded and differs from greedy", () => {
+    const prompt = encode(p, "ROMEO:");
+    const a = decode(p, generate(p, prompt, 24, "sample"));
+    expect(decode(p, generate(p, prompt, 24, "sample"))).toBe(a);
+    expect(decode(p, generate(p, prompt, 24, "greedy"))).not.toBe(a);
+  });
+
+  test("stops at the context size", () => {
+    expect(generate(p, encode(p, "ROMEO:"), 500).length).toBe(p.config.block_size + 1);
   });
 });

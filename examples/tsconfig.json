@@ -1,5 +1,6 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": { "noErrorTruncation": true },
-  "include": ["."]
+  "include": ["."],
+  "exclude": ["hover.ts"]
 }

@@ -16,3 +16,6 @@ coverage
 # Generated at runtime
 .run
 model/input.txt
+
+# Python
+__pycache__

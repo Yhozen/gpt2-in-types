@@ -1,7 +1,12 @@
 import { defineConfig } from "vite-plus";
 
 /** Machine-generated sources: large literal tables, not worth formatting or linting. */
-const generated = ["src/model/weights.ts", "tests/types/ops.gen.ts", "examples/*.ts", "model/**"];
+const generated = [
+  "src/model/program.ts",
+  "tests/types/engine.gen.ts",
+  "examples/*.ts",
+  "model/**",
+];
 
 export default defineConfig({
   staged: {
