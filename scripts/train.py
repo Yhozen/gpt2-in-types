@@ -284,6 +284,9 @@ class GPT(nn.Module):
 
 
 def main():
+    # The integer forward pass runs in float32 (MPS), which is exact only below 2^24.
+    # The largest intermediate is LayerNorm's sum of squares, n_embd * (2 * R_MAX)^2.
+    assert CFG["n_embd"] * (2 * R_MAX) ** 2 < 2**24, "n_embd > 64 needs a float64 sum of squares in int_layernorm"
     text = load_text()
     chars = sorted(set(text))
     stoi = {ch: i for i, ch in enumerate(chars)}
