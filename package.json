@@ -1,0 +1,56 @@
+{
+  "name": "gpt2-in-types",
+  "version": "0.0.0",
+  "description": "GPT-2 implemented in the TypeScript type system.",
+  "homepage": "https://github.com/Yhozen/gpt2-in-types#readme",
+  "bugs": {
+    "url": "https://github.com/Yhozen/gpt2-in-types/issues"
+  },
+  "license": "MIT",
+  "author": "Gabriel Perez",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yhozen/gpt2-in-types.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "typecheck": "tsrs --noEmit --fast",
+    "check": "vp check && tsrs --noEmit --fast",
+    "prepublishOnly": "vp run build",
+    "prepare": "vp config"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsrs": "0.23.0-ts7.1.0-beta",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.18.0",
+      "onFail": "download"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=26",
+      "onFail": "error"
+    }
+  },
+  "engines": {
+    "node": ">=26"
+  }
+}
