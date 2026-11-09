@@ -40,7 +40,8 @@ Type checking uses [tsrs](https://github.com/oxc-project/tsrs) (`tsrs --noEmit -
 - `src/reference/int.ts` is the spec: the engine must match it digit for digit.
 - `scripts/train.py` (QAT, PyTorch via uv) → `model/qat.json`; `scripts/compile.ts` → `model/program.json` + `src/model/program.ts`.
 - Generated (do not hand-edit): `src/model/program.ts`, `model/program.json`, `tests/types/engine.gen.ts`, `examples/story.ts`. Regenerate with `vp run compile`.
-- `node scripts/hover.ts <file> <Type>` hovers through `tsrs --lsp` like an editor; `node scripts/generate.ts "PROMPT" N` hovers and compares with the reference.
-- Limits that shape the code: the CLI aborts a statement after ~5M instantiations (hover does not); depth limit 100; tuples cost per element and cap at 9,999, unary strings do not.
+- `vp run parity` (after retraining) rewrites `model/parity.json`; `vp test` asserts the reference reproduces the PyTorch integer forward pass.
+- `node scripts/hover.ts <file> <Type>...` hovers through `tsrs --lsp` like an editor (several names share one session); `node scripts/generate.ts "PROMPT" N` hovers and compares with the reference.
+- Limits that shape the code: the checker returns `any` after ~5M instantiations since its counter was last zeroed. The CLI zeroes it per statement; a hover only when a literal type node is first resolved, so the engine draws one from `M.Fuel` before every block (`Refuel`). Keep that lookup when touching `Layers`, and run `vp run check:hover` (several hovers in one server session) after engine changes: a single fresh-server hover can pass while an editor session fails; depth limit 100; tuples cost per element and cap at 9,999, unary strings do not.
 - Pitfalls: map only over bare type parameters; never intersect tuples (`X & Strs`) before mapping; force results with `extends infer X extends ...`; key number lookups as `` `${n}` & keyof T ``; keep recursion tail-recursive.
 - Run the language server with `TSRS_FAST=1` (the `tsdk/tsgo` wrapper does): ~3x faster on this workload.

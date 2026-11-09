@@ -26,18 +26,21 @@ Measured on an Apple Silicon Mac, through the real language server
 | Hover                                                          | Time   | Output                                                             |
 | -------------------------------------------------------------- | ------ | ------------------------------------------------------------------ |
 | `Generate<"Once upon a time", 24, "greedy">`                   | ~3.5 s | `Once upon a time, there was a little gir`                         |
-| `Generate<"Once upon a time", 24>` (sampled)                   | ~5 s   | `Once upon a time, there was a big car wa`                         |
-| `Generate<"Once upon a time", 48>` (full 64-character context) | ~9.5 s | `Once upon a time, there was a big car was so so happy and said, ` |
+| `Generate<"Once upon a time", 24>` (sampled)                   | ~3.6 s | `Once upon a time, there was a proble whi`                         |
+| `Generate<"Once upon a time", 48>` (full 64-character context) | ~8.5 s | `Once upon a time, there was a proble whise. The little girl was ` |
 
 Every output is checked digit for digit against an exact integer reference
-(`src/reference/int.ts`). The CLI-checked version of the 24-character
+(`src/reference/int.ts`), and the reference in turn reproduces the PyTorch
+integer forward pass used in training exactly (`vp run parity`: 0 of 16,384
+positions differ). The CLI-checked version of the 24-character
 generation (`examples/story.ts`, split into statements, see below) takes about
 4 s.
 
 The model is GPT-2's architecture at toy scale: 4 layers, 8 heads, 64
 dimensions, 64-character context, character-level, trained on TinyStories
 (Eldan & Li 2023, [arXiv:2305.07759](https://arxiv.org/abs/2305.07759); 211k
-parameters, integer validation loss 1.11). For comparison, the smallest
+parameters, integer validation loss 1.14 nats per character on a fixed set of
+256 validation windows, computed by the reference itself). For comparison, the smallest
 pretrained TinyStories model (TinyStories-1M) is 64 dimensions and 8 layers
 with a 50k-token vocabulary, and GPT-2 small is 124M parameters. See
 [Experiments](#experiments) and [Scaling](#scaling).
@@ -64,9 +67,8 @@ I measured these before designing the engine:
 
 And the limits: the CLI aborts a single statement after ~5M instantiations
 (TS2589), every evaluation stops at 100 levels of nesting, non-tail recursion
-at ~50 levels and tail recursion at 1000. An editor hover is not subject to
-the 5M budget (a 12M-instantiation type hovers fine) but is subject to the
-depth limit.
+at ~50 levels and tail recursion at 1000. An editor hover has the same 5M
+budget, counted differently: see [Making it hoverable](#making-it-hoverable).
 
 So the engine represents numbers as **unary strings** (`"111"` is 3, `"-11"`
 is −2). Addition is concatenation and comparison is a prefix match, both
@@ -82,9 +84,10 @@ additions and lookups:
   ([BitNet b1.58](https://arxiv.org/abs/2402.17764), Ma et al. 2024; BitLinear
   from [BitNet](https://arxiv.org/abs/2310.11453), Wang et al. 2023). A matrix
   compiles to a type alias whose row _j_ is one template literal: the inputs
-  with weight +1 concatenated, minus those with weight −1. Inputs are offset
-  to be non-negative so each nonzero weight is one span, and biases are
-  constant runs of 1s. The LM head uses int4 weights, each input repeated |w|
+  with weight +1 concatenated, minus those with weight −1. Each input is
+  split into a positive part and a negative magnitude (one of them empty), so
+  a weight of −1 just swaps which part goes where, and biases are constant
+  runs of 1s. The LM head uses int4 weights, each input repeated |w|
   times (BitNet also keeps the head at higher precision).
 - **Lookup tables instead of arithmetic.** Requantization, GELU, `exp` and the
   softmax normalizer are monotone functions of an integer, so each one is
@@ -127,10 +130,25 @@ A hover evaluates the requested type on demand, so laziness matters:
   Deep chains of those trip the depth limit.
 - Mapped types are only applied to bare type parameters (that is what keeps
   tuples as tuples), and loops are tail-recursive.
-- The CLI's 5M budget per statement is the one place where hover and CLI
-  differ. The hover alias computes everything in one go. `examples/romeo.ts`,
-  checked by `vp run examples`, runs the same generation as a chain of
-  `Advance<State, 2>` statements (two positions each) and asserts the result.
+- **The 5M budget.** The checker gives up with `any` once 5M instantiations
+  have accumulated since its counter was last zeroed. The CLI zeroes it for
+  every statement. A hover never does, but reading tsrs's source
+  (`crates/tsrs_checker`) shows the counter is also zeroed, as a side effect,
+  whenever a literal type node is resolved for the first time. While the
+  model's tables are cold they supply such resets, which is why a first hover
+  worked and a second hover in the same editor session returned `any` (and
+  why deeper models failed part-way through the context). So the compiled
+  program includes `Fuel`, a pool of 254k literal nodes keyed by position and
+  two tokens, and the engine looks one up before every block (`Refuel`).
+  `vp run check:hover` hovers three full-context generations in one session
+  to guard this. It relies on an implementation detail of tsrs 0.23, which is
+  why the version is pinned.
+- The CLI budget is per statement and the pool does not lift it reliably, so
+  `examples/story.ts`, checked by `vp run examples`, runs the same generation
+  as a chain of `Advance<State, 2>` statements (two positions each) and
+  asserts the result.
+- A prompt with a character the model does not know hovers as an error message
+  (`"Error: the character '3' is not in the model's vocabulary"`), not `any`.
 
 ## Usage
 
@@ -143,7 +161,8 @@ node scripts/generate.ts "Tom and Lily" 24 --greedy
 node scripts/hover.ts examples/hover.ts Text    # hover any type, like an editor
 vp run examples                                 # CLI check of examples/story.ts
 vp run check                                    # format, lint, type check (incl. engine tests)
-vp test                                         # reference and compiled-table tests
+vp test                                         # reference, compiled tables, parity vectors
+vp run check:hover                              # three full-context hovers in one editor session
 ```
 
 In VS Code or Cursor, open `examples/hover.ts` and hover `Text`. The committed
@@ -154,6 +173,7 @@ To retrain (needs [uv](https://docs.astral.sh/uv/)):
 ```sh
 vp run train     # PyTorch QAT, writes model/qat.json (~10 min on Apple Silicon)
 vp run compile   # program.json, src/model/program.ts, engine tests, examples/story.ts
+vp run parity    # model/parity.json: PyTorch vs reference, and the reference's validation loss
 ```
 
 ## Experiments
@@ -162,12 +182,12 @@ All runs use the same integer architecture and training recipe (1.5k float
 steps, then 12.5k integer steps with calibrated, frozen scales). Hover times are
 for the default prompt plus 24 characters with `TSRS_FAST=1`.
 
-| Data        | Layers × dims | Params | Integer val loss | Hover, 24 chars | Notes                                                                                                                      |
-| ----------- | ------------- | ------ | ---------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Shakespeare | 4 × 32        | 56k    | 2.13             | 1.4 s           | Previous default. `ROMEO:⏎Whe the crome the love `                                                                         |
-| TinyStories | 4 × 32        | 56k    | ~2.32 (stopped)  | –               | Stalled; stopped to free the GPU                                                                                           |
-| TinyStories | **4 × 64**    | 211k   | **1.11**         | **5.0 s**       | **Default.** Greedy: `Once upon a time, there was a little girl named Lily.`                                               |
-| TinyStories | 8 × 64        | 410k   | 1.04             | 7.3 s           | Best text (`Tom and Lily went to the park. They were so happy to see the`), but hovers fail past ~44 positions (see below) |
+| Data        | Layers × dims | Params | Integer val loss | Hover, 24 chars | Notes                                                                                                                   |
+| ----------- | ------------- | ------ | ---------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Shakespeare | 4 × 32        | 56k    | 2.13             | 1.4 s           | Previous default. `ROMEO:⏎Whe the crome the love `                                                                      |
+| TinyStories | 4 × 32        | 56k    | ~2.32 (stopped)  | –               | Stalled; stopped to free the GPU                                                                                        |
+| TinyStories | **4 × 64**    | 211k   | **1.11**         | **3.6 s**       | **Default.** Greedy: `Once upon a time, there was a little girl named Lily.`                                            |
+| TinyStories | 8 × 64        | 410k   | 1.04             | 7.3 s           | Best text (`Tom and Lily went to the park. They were so happy to see the`), hovers take about twice as long (see below) |
 
 What made the difference:
 
@@ -187,11 +207,12 @@ need integer retraining anyway, and their 50,257-token BPE vocabulary would
 make the LM head alone ~50k rows per generated token (about 20× the whole
 per-token cost here) and require a BPE tokenizer in types.
 
-Open issue: the 8-layer model's hover returns `any` beyond roughly 44
-positions (28 generated characters work, 32 do not), with or without fast
-mode. It is not the instantiation budget, which hovers do not enforce, so it
-is most likely another depth limit; the 4-layer model works to the full
-64-character context.
+The 8-layer model used to return `any` beyond roughly 44 positions. That was
+the 5M budget (see [Making it hoverable](#making-it-hoverable)): at late
+positions a single position of that model costs more than 5M counted
+instantiations. With a budget reset before every block it now runs to the full
+64-character context, also on repeated hovers. A 16-layer, 32-dimension model
+(untrained, built to bisect the limit) does too.
 
 ## The playbook, triaged
 
@@ -206,7 +227,7 @@ concatenation are cheap and everything else is not.
 | Low-bit KV cache (SAW-INT4, TurboQuant)                                                      | **Yes**, simplified | q/k/v with 4-bit magnitudes and static scales. Their rotations would likely recover some quality.                                                                                                                                                 |
 | Reusing computation, storage for compute (KV cache; Mooncake)                                | **Yes**, in spirit  | Positions reuse cached K/V. The checker memoizes every instantiation, and the CLI example chains statement-sized states.                                                                                                                          |
 | Sparse attention (DeepSeek-V3.2 DSA, LongCat, AttentionIndex, Multi-layer Indexer)           | No                  | With 64 positions, dense attention over the cache is cheaper than any indexer. It would matter at longer contexts.                                                                                                                                |
-| Linear or recurrent attention (Kimi Linear, Qwen3-Next)                                      | No, best next step  | Attention is why hover time grows with context (2 s at 24 tokens, 12 s at 58). A fixed-size recurrent state would make the cost per token constant, but it is a different architecture from GPT-2.                                                |
+| Linear or recurrent attention (Kimi Linear, Qwen3-Next)                                      | No, best next step  | Attention is why hover time grows with context (the 48-character hover takes more than twice the 24-character one). A fixed-size recurrent state would make the cost per token constant, but it is a different architecture from GPT-2.           |
 | Speculative decoding (DSpark, EAGLE-3, DFlash)                                               | No                  | Speculation trades parallel compute for fewer sequential passes. The checker has no parallelism to spare, so verifying k drafts costs about as much as generating them. "Speculative Decoding: Performance or Illusion?" makes the general point. |
 | MoE and expert parallelism (Least-Loaded EP, wide EP)                                        | No                  | One small dense model on one thread.                                                                                                                                                                                                              |
 | Kernels and serving (FlashAttention-4, HiSparse, DualPath, async scheduling, disaggregation) | No                  | Hardware- and cluster-specific. The closest analogue is splitting work to fit a budget, as the CLI example does per statement.                                                                                                                    |

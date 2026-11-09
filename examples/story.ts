@@ -27,4 +27,4 @@ type S19 = Advance<S18, 2>;
 type S20 = Advance<S19, 1>;
 
 export type Text = Output<S20>;
-export type Check = Expect<Equal<Text, "Once upon a time, there was a big car wa">>;
+export type Check = Expect<Equal<Text, "Once upon a time, there was a proble whi">>;

@@ -26,5 +26,7 @@ export type Trace = Expect<Equal<E.Trace<[33, 44, 41, 54, 41, 42, 51, 54, 41]>, 
   [ToS<-210>, ToS<-24>, ToS<-147>, ToS<-81>, ToS<20>, ToS<12>, ToS<67>, ToS<-121>, ToS<105>, ToS<3>, ToS<-54>, ToS<-28>, ToS<16>, ToS<-50>, ToS<106>, ToS<58>, ToS<8>, ToS<-42>, ToS<-71>, ToS<-55>, ToS<-30>, ToS<-50>, ToS<43>, ToS<49>, ToS<-67>, ToS<38>, ToS<-56>, ToS<53>, ToS<63>, ToS<18>, ToS<48>, ToS<14>, ToS<-81>, ToS<138>, ToS<-73>, ToS<-163>, ToS<-19>, ToS<-115>, ToS<63>, ToS<-31>, ToS<51>, ToS<-18>, ToS<25>, ToS<120>, ToS<-190>, ToS<-38>, ToS<40>, ToS<-149>, ToS<-9>, ToS<-9>, ToS<-46>, ToS<13>, ToS<97>, ToS<-53>, ToS<107>, ToS<0>, ToS<60>, ToS<-32>, ToS<-21>, ToS<-16>, ToS<-30>, ToS<36>, ToS<-7>, ToS<-58>]]>>;
 export type Generate_Once_sample = Expect<Equal<E.Generate<"Once", 3, "sample">, "Once up">>;
 export type Generate_Once_greedy = Expect<Equal<E.Generate<"Once", 3, "greedy">, "Once up">>;
-export type Generate_Tom_sample = Expect<Equal<E.Generate<"Tom ", 3, "sample">, "Tom sai">>;
+export type Generate_Tom_sample = Expect<Equal<E.Generate<"Tom ", 3, "sample">, "Tom ask">>;
 export type Generate_Tom_greedy = Expect<Equal<E.Generate<"Tom ", 3, "greedy">, "Tom sai">>;
+export type Error_unknown_character = Expect<Equal<E.Generate<"3 pigs", 2>, "Error: the character '3' is not in the model's vocabulary">>;
+export type Error_empty_prompt = Expect<Equal<E.Generate<"", 2>, "Error: the prompt is empty">>;

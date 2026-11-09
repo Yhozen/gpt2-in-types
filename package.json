@@ -19,6 +19,8 @@
     "compile": "node scripts/compile.ts && node scripts/gen-engine-tests.ts && node scripts/generate.ts \"Once upon a time\" 24 --out examples/story.ts",
     "generate": "node scripts/generate.ts",
     "hover": "node scripts/hover.ts",
+    "check:hover": "node scripts/check-hover.ts",
+    "parity": "uv run scripts/parity.py && node scripts/parity.ts",
     "examples": "tsrs -p examples --fast",
     "test": "vp test",
     "typecheck": "tsrs --noEmit --fast",

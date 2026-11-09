@@ -1,11 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
 import {
+  argmax,
   attendHead,
   decode,
   encode,
+  forward,
   generate,
   layerNorm,
+  matvec,
   type Program,
   R_MAX,
   rq,
@@ -106,5 +109,26 @@ describe("generation", () => {
 
   test("stops at the context size", () => {
     expect(generate(p, encode(p, "Once"), 500).length).toBe(p.config.block_size + 1);
+  });
+});
+
+describe("parity with training", () => {
+  // model/parity.json holds LM-head accumulators computed by the PyTorch integer
+  // forward pass of scripts/train.py (see scripts/parity.py). The reference,
+  // whose tables scripts/compile.ts rebuilds independently, must reproduce them.
+  const parity = JSON.parse(
+    readFileSync(new URL("../model/parity.json", import.meta.url), "utf8"),
+  ) as { tokens: number[][]; acc: number[][][] };
+
+  test("the reference reproduces the PyTorch integer forward pass exactly", () => {
+    expect(parity.tokens.length).toBeGreaterThan(0);
+    parity.tokens.forEach((window, w) => {
+      const cache = p.layers.map(() => ({ k: [] as number[][][], v: [] as number[][][] }));
+      for (let pos = 0; pos < window.length - 1; pos++) {
+        const acc = matvec(p.head, layerNorm(forward(p, window[pos]!, pos, cache), p));
+        expect(acc, `window ${w}, position ${pos}`).toEqual(parity.acc[w]![pos]);
+        expect(argmax(acc)).toBe(argmax(parity.acc[w]![pos]!));
+      }
+    });
   });
 });

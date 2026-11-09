@@ -1,15 +1,15 @@
 /**
  * The integer GPT-2 (src/reference/int.ts) as one type:
  *
- *   type Text = Generate<"ROMEO:", 16>;   // hover it
+ *   type Text = Generate<"Once upon a time", 24>;   // hover it
  *
  * Values are signed unary strings ("111" = 3, "-11" = -2, "" = 0; see
  * src/num/ustr.ts). Additions are string concatenation, comparisons are prefix
  * matches, and everything non-linear is a table lookup or a binary search
  * over a threshold table, so no step of the model multiplies.
  *
- * This engine is written for the compiled program in src/model/program.ts
- * (head size 8, 4 heads); see scripts/compile.ts.
+ * The model's shape, weights and tables come from the compiled program in
+ * src/model/program.ts; see scripts/compile.ts.
  */
 import type { AddS, NegS, SubU, ToS } from "../num/ustr.ts";
 import type * as M from "../model/program.ts";
@@ -25,11 +25,6 @@ export type NegPart<S> = S extends `-${infer A}` ? A : "";
 /** @internal */
 export type Split<X> = [{ [K in keyof X]: PosPart<X[K]> }, { [K in keyof X]: NegPart<X[K]> }];
 
-export type Negate<N> = N extends 0
-  ? 0
-  : `-${N & number}` extends `${infer V extends number}`
-    ? V
-    : never;
 export type Dbl<S extends string> = `${S}${S}`;
 
 /**
@@ -51,13 +46,9 @@ export type Walk<A extends string, N> = N extends readonly [
 export type RQU<A, T> = A extends `-${infer Mag}`
   ? NegS<Walk<Mag, T> & string>
   : Walk<A & string, T>;
-/** Same with number leaves. */
-export type RQN<A, T> = A extends `-${infer Mag}` ? Negate<Walk<Mag, T>> : Walk<A & string, T>;
-export type RQAllU<A, T> = { [K in keyof A]: RQU<A[K], T> };
-export type RQAllN<A, T> = { [K in keyof A]: RQN<A[K], T> };
 
-/** Residual stream values stay in [-255, 255]. */
-type R255 = M.BitsU8["11111111"];
+/** Residual stream values stay in [-RMax, RMax]. */
+type R255 = M.RMax;
 export type Clamp<S> = S extends `-${R255}${string}`
   ? `-${R255}`
   : S extends `${R255}${string}`
@@ -114,18 +105,6 @@ export type WalkSigma<HI extends string, LO extends string, N> = N extends reado
         : WalkSigma<HI, LO, Lo>
       : WalkSigma<HI, LO, Lo>
   : N;
-export type Rev<S extends string, Acc extends string = ""> = S extends `${infer H}${infer R}`
-  ? Rev<R, `${H}${Acc}`>
-  : Acc;
-export type Zeros<S extends string, Acc extends string = ""> = S extends `${string}${infer R}`
-  ? Zeros<R, `${Acc}0`>
-  : Acc;
-/** The sum of squares truncated to 3 significant digits (the sqrt table's key). */
-/** @internal */
-export type SqrtKey<SS extends string> =
-  Rev<SS> extends `${infer A}${infer B}${infer C}${infer Rest}`
-    ? `${A}${B}${C}${Zeros<Rest>}`
-    : Rev<SS>;
 /** [128 sigma, 64 sigma, ..., sigma] for the long division. */
 export type Divisors<S1 extends string> =
   Dbl<S1> extends infer S2 extends string
@@ -218,10 +197,6 @@ export type Cat<X, Acc extends string = ""> = X extends readonly [infer H, ...in
   ? Cat<R, `${Acc}${H & string}`>
   : Acc;
 
-export type ExpAll<D, L> = { [J in keyof D]: Walk<D[J] & string, L["exp" & keyof L]> };
-export type ProbAll<D, Lse extends string, L> = {
-  [J in keyof D]: Walk<`${D[J] & string}${Lse}`, L["prob" & keyof L]>;
-};
 export type Weighted<Pr, V, Dim> = {
   [J in keyof Pr]: PV<
     M.ProdPV[`${Pr[J] & number}` & keyof M.ProdPV],
@@ -319,15 +294,50 @@ export type Block<L extends number, X, KV extends readonly unknown[]> =
       : never
     : never;
 
+/**
+ * Reset the checker's instantiation budget (called before every block).
+ *
+ * tsrs (like tsc) gives up with `any` once 5M instantiations have accumulated.
+ * The counter is zeroed per checked statement, which a hover never reaches, and
+ * also, as a side effect, whenever a literal type node is resolved for the
+ * first time (crates/tsrs_checker: get_type_from_literal_type_node calls
+ * check_expression). M.Fuel is a pool of such nodes, one per (position, token,
+ * token), resolved lazily. Block L of a position draws the node keyed by the
+ * position, its token and the token L + 1 positions back, so nearly every
+ * block of a new hover finds an unused node and zeroes the counter.
+ *
+ * Without this only the first hover of an editor session works (the model's
+ * own tables supply resets while they are cold), and deeper models fail
+ * part-way through the context.
+ */
+type Refuel<
+  Tokens extends number[],
+  Pos extends unknown[],
+  L extends unknown[],
+> = M.Fuel[Pos["length"] & keyof M.Fuel] extends infer ByToken
+  ? ByToken[Tokens[Pos["length"]] & keyof ByToken] extends infer Pool
+    ? Pool[(Pos extends [...L, unknown, ...infer P] ? Tokens[P["length"]] : L["length"]) &
+        keyof Pool]
+    : never
+  : never;
+
+/** All blocks of the position Pos of Tokens. Returns [x, kv]. */
 /** @internal */
 export type Layers<
-  X,
+  Tokens extends number[],
+  Pos extends unknown[],
   KV extends readonly unknown[],
+  X = Embed<Tokens[Pos["length"]], Pos["length"]>,
   L extends unknown[] = [],
 > = L["length"] extends M.Config["nLayer"]
   ? [X, KV]
-  : Block<L["length"], X, KV> extends [infer X2 extends Strs, infer KV2 extends readonly unknown[]]
-    ? Layers<X2, KV2, [...L, 0]>
+  : Refuel<Tokens, Pos, L> extends 0
+    ? Block<L["length"], X, KV> extends [
+        infer X2 extends Strs,
+        infer KV2 extends readonly unknown[],
+      ]
+      ? Layers<Tokens, Pos, KV2, X2, [...L, 0]>
+      : never
     : never;
 
 /** @internal */
@@ -354,10 +364,20 @@ type AddNoise<A, N> = { [K in keyof A]: AddS<A[K] & string, N[K & keyof N] & str
 
 // ---------------------------------------------------------------- generation
 
+/**
+ * Prompt -> token ids. A character outside the model's vocabulary (or an empty
+ * prompt) yields an error message instead, which Start, Steps, Advance and
+ * Output pass through, so the hover shows what went wrong.
+ */
 /** @internal */
 export type Encode<S extends string, Acc extends number[] = []> = S extends `${infer C}${infer R}`
-  ? Encode<R, [...Acc, M.CharToId[C & keyof M.CharToId]]>
-  : Acc;
+  ? C extends keyof M.CharToId
+    ? Encode<R, [...Acc, M.CharToId[C]]>
+    : `Error: the character ${Quote<C>} is not in the model's vocabulary`
+  : Acc extends []
+    ? "Error: the prompt is empty"
+    : Acc;
+type Quote<C extends string> = C extends "\n" ? "\\n" : `'${C}'`;
 export type Decode<T, Acc extends string = ""> = T extends readonly [infer I, ...infer R]
   ? Decode<R, `${Acc}${M.Vocab[I & keyof M.Vocab] & string}`>
   : Acc;
@@ -370,13 +390,14 @@ export type EmptyKV<L extends unknown[] = []> = L["length"] extends M.Config["nL
   : [[[], []], ...EmptyKV<[...L, 0]>];
 
 /**
- * Generation state: [tokens, position counter, tokens still to generate, KV cache].
+ * Generation state: [tokens, position counter, KV cache].
  * Steps runs positions until N more tokens exist (or the context is full), so a
  * long generation can be split across statements: the CLI allows ~5M type
- * instantiations per statement; an editor hover has no such cap.
+ * instantiations per statement (for hovers, see Refuel).
  */
 export type State = readonly [number[], unknown[], readonly unknown[]];
-export type Start<Prompt extends string> = [Encode<Prompt>, [], EmptyKV];
+export type Start<Prompt extends string> =
+  Encode<Prompt> extends infer T extends number[] ? [T, [], EmptyKV] : Encode<Prompt>;
 
 /** Run positions until N more tokens are generated. */
 export type Steps<S, N extends number, Mode = "sample"> = S extends readonly [
@@ -385,10 +406,16 @@ export type Steps<S, N extends number, Mode = "sample"> = S extends readonly [
   infer KV extends readonly unknown[],
 ]
   ? Run<Tokens, Pos, Tuple<N>, KV, Mode>
-  : never;
+  : S extends string
+    ? S
+    : never;
 
 /** The text of a state (prompt + generated so far). */
-export type Output<S> = S extends readonly [infer Tokens, ...unknown[]] ? Decode<Tokens> : never;
+export type Output<S> = S extends readonly [infer Tokens, ...unknown[]]
+  ? Decode<Tokens>
+  : S extends string
+    ? S
+    : never;
 
 /** Process position Pos; append the next token when the prompt is consumed. */
 export type Run<
@@ -401,18 +428,12 @@ export type Run<
   ? [Tokens, Pos, KV]
   : [...Pos, 0]["length"] extends Tokens["length"]
     ? Left extends [unknown, ...infer Left2 extends unknown[]]
-      ? Layers<Embed<Tokens[Pos["length"]], Pos["length"]>, KV> extends [
-          infer X,
-          infer KV2 extends readonly unknown[],
-        ]
+      ? Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
         ? Run<[...Tokens, NextToken<X, Pos["length"], Mode>], [...Pos, 0], Left2, KV2, Mode>
         : never
       : [Tokens, Pos, KV]
     : // A prompt position: only the KV cache matters.
-      Layers<Embed<Tokens[Pos["length"]], Pos["length"]>, KV> extends [
-          unknown,
-          infer KV2 extends readonly unknown[],
-        ]
+      Layers<Tokens, Pos, KV> extends [unknown, infer KV2 extends readonly unknown[]]
       ? Run<Tokens, [...Pos, 0], Left, KV2, Mode>
       : never;
 
@@ -431,10 +452,7 @@ export type Trace<
   Out extends unknown[] = [],
 > = Pos["length"] extends Tokens["length"]
   ? Out
-  : Layers<Embed<Tokens[Pos["length"]], Pos["length"]>, KV> extends [
-        infer X,
-        infer KV2 extends readonly unknown[],
-      ]
+  : Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
     ? Trace<Tokens, [...Pos, 0], KV2, [...Out, X]>
     : never;
 
@@ -449,7 +467,9 @@ export type Advance<S, K extends number, Mode = "sample"> = S extends readonly [
   infer KV extends readonly unknown[],
 ]
   ? RunK<Tokens, Pos, Tuple<K>, KV, Mode>
-  : never;
+  : S extends string
+    ? S
+    : never;
 type RunK<
   Tokens extends number[],
   Pos extends unknown[],
@@ -459,10 +479,7 @@ type RunK<
 > = K extends [unknown, ...infer K2 extends unknown[]]
   ? Pos["length"] extends M.Config["blockSize"]
     ? [Tokens, Pos, KV]
-    : Layers<Embed<Tokens[Pos["length"]], Pos["length"]>, KV> extends [
-          infer X,
-          infer KV2 extends readonly unknown[],
-        ]
+    : Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
       ? [...Pos, 0]["length"] extends Tokens["length"]
         ? RunK<[...Tokens, NextToken<X, Pos["length"], Mode>], [...Pos, 0], K2, KV2, Mode>
         : RunK<Tokens, [...Pos, 0], K2, KV2, Mode>

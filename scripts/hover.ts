@@ -1,10 +1,12 @@
 // Hover a type through the tsrs language server, exactly like an editor does.
 //
-//   node scripts/hover.ts examples/hover.ts Text
+//   node scripts/hover.ts examples/hover.ts Text [Greedy ...]
 //
 // Starts `tsrs --lsp --stdio` (via the tsdk launcher VS Code uses, see
 // .vscode/settings.json), opens the file, sends textDocument/hover on the
-// type's name and prints the hover text and how long it took.
+// type's name and prints the hover text and how long it took. Several names
+// are hovered one after another in the same server session, like an editor
+// that stays open.
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -17,17 +19,38 @@ export interface HoverResult {
   seconds: number;
 }
 
-export async function hover(file: string, name: string): Promise<HoverResult> {
+/** Give up after this long (a crashed or stuck server would otherwise hang the caller). */
+const TIMEOUT_MS = Number(process.env.HOVER_TIMEOUT_MS ?? 300_000);
+
+export const hover = async (file: string, name: string): Promise<HoverResult> =>
+  (await hoverAll(file, [name]))[0]!;
+
+/** Hover each name in turn, in one language-server session. */
+export async function hoverAll(file: string, names: string[]): Promise<HoverResult[]> {
   const path = resolve(file);
   const source = readFileSync(path, "utf8");
   const lines = source.split("\n");
-  const line = lines.findIndex((l) => new RegExp(`\\btype ${name}\\b`).test(l));
-  if (line < 0) throw new Error(`no "type ${name}" in ${file}`);
+  const positions = names.map((name) => {
+    const line = lines.findIndex((l) => new RegExp(`\\btype ${name}\\b`).test(l));
+    if (line < 0) throw new Error(`no "type ${name}" in ${file}`);
+    return { line, character: lines[line]!.indexOf(name) + 1 };
+  });
   const uri = pathToFileURL(path).href;
 
   const server = spawn(resolve(ROOT, process.env.TSDK ?? "tsdk/tsgo"), ["--lsp", "--stdio"], {
     cwd: ROOT,
   });
+  const failed = new Promise<never>((_, reject) => {
+    server.on("error", reject);
+    server.on("exit", (code, signal) =>
+      reject(new Error(`the language server exited (code ${code}, signal ${signal})`)),
+    );
+    setTimeout(
+      () => reject(new Error(`no hover result after ${TIMEOUT_MS / 1000}s`)),
+      TIMEOUT_MS,
+    ).unref();
+  });
+  failed.catch(() => {}); // only surfaces through the races below
   let buffer = Buffer.alloc(0);
   let nextId = 0;
   const pending = new Map<
@@ -39,11 +62,14 @@ export async function hover(file: string, name: string): Promise<HoverResult> {
     server.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
   };
   const request = (method: string, params: object) =>
-    new Promise<{ result?: { contents?: { value?: string } } }>((done) => {
-      const id = ++nextId;
-      pending.set(id, done);
-      send({ id, method, params });
-    });
+    Promise.race([
+      failed,
+      new Promise<{ result?: { contents?: { value?: string } } }>((done) => {
+        const id = ++nextId;
+        pending.set(id, done);
+        send({ id, method, params });
+      }),
+    ]);
   server.stdout.on("data", (chunk: Buffer) => {
     buffer = Buffer.concat([buffer, chunk]);
     for (;;) {
@@ -73,25 +99,28 @@ export async function hover(file: string, name: string): Promise<HoverResult> {
       method: "textDocument/didOpen",
       params: { textDocument: { uri, languageId: "typescript", version: 1, text: source } },
     });
-    const started = performance.now();
-    const response = await request("textDocument/hover", {
-      textDocument: { uri },
-      position: { line, character: lines[line]!.indexOf(name) + 1 },
-    });
-    const seconds = (performance.now() - started) / 1000;
-    return { text: response.result?.contents?.value ?? "", seconds };
+    const results: HoverResult[] = [];
+    for (const position of positions) {
+      const started = performance.now();
+      const response = await request("textDocument/hover", { textDocument: { uri }, position });
+      const seconds = (performance.now() - started) / 1000;
+      results.push({ text: response.result?.contents?.value ?? "", seconds });
+    }
+    return results;
   } finally {
+    server.removeAllListeners("exit");
     server.kill();
   }
 }
 
 if (import.meta.main) {
-  const [file, name] = process.argv.slice(2);
-  if (!file || !name) {
-    console.error("usage: node scripts/hover.ts <file> <TypeName>");
+  const [file, ...names] = process.argv.slice(2);
+  if (!file || names.length === 0) {
+    console.error("usage: node scripts/hover.ts <file> <TypeName> [<TypeName> ...]");
     process.exit(2);
   }
-  const { text, seconds } = await hover(file, name);
-  console.log(text);
-  console.log(`(${seconds.toFixed(2)}s)`);
+  for (const { text, seconds } of await hoverAll(file, names)) {
+    console.log(text);
+    console.log(`(${seconds.toFixed(2)}s)`);
+  }
 }

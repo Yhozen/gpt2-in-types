@@ -1,2 +1,6 @@
 * text=auto eol=lf
 pnpm-lock.yaml linguist-generated=true -diff
+src/model/program.ts linguist-generated=true -diff
+model/*.json linguist-generated=true -diff
+tests/types/engine.gen.ts linguist-generated=true
+examples/story.ts linguist-generated=true

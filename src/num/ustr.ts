@@ -38,9 +38,6 @@ export type ToS<N> = N extends number
     : FromDigits<`${N}`>
   : never;
 
-/** Unsigned: is A >= B? */
-export type GeU<A extends string, B extends string> = A extends `${B}${string}` ? true : false;
-
 /** Signed a + b. */
 export type AddS<A extends string, B extends string> = A extends `-${infer a}`
   ? B extends `-${infer b}`
@@ -58,22 +55,6 @@ export type SubU<A extends string, B extends string> = A extends `${B}${infer R}
     : never;
 
 export type NegS<A extends string> = A extends `-${infer a}` ? a : A extends "" ? "" : `-${A}`;
-
-/**
- * Threshold search: the largest W-bit q with |A| >= T[q], built one bit at a
- * time from the top (binary search). T maps W-bit strings to thresholds
- * (number literals); Z is W zeros. Returns q as a W-bit string.
- */
-export type SearchGe<
-  A extends string,
-  T,
-  Z extends string,
-  P extends string = "",
-> = Z extends `0${infer Zr}`
-  ? A extends `${ToS<T[`${P}1${Zr}` & keyof T]>}${string}`
-    ? SearchGe<A, T, Zr, `${P}1`>
-    : SearchGe<A, T, Zr, `${P}0`>
-  : P;
 
 /** Negate a non-negative number literal (0 stays 0). */
 export type NegNum<N> = N extends 0
