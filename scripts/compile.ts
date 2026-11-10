@@ -279,6 +279,10 @@ out.push(matrix("Head", program.head));
 export type Fuel = {
 ${Array.from({ length: block_size }, (_, p) => `  ${p}: ${perToken};`).join("\n")}
 };
+/** FuelKey[layer][token] = (token + layer) mod vocabulary: a different pool node per layer. */
+export type FuelKey = [
+${layers.map((_, l) => `  [${ids.map((i) => (i + l) % ids.length).join(", ")}],`).join("\n")}
+];
 `);
 }
 {

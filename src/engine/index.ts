@@ -303,8 +303,9 @@ export type Block<L extends number, X, KV extends readonly unknown[]> =
  * first time (crates/tsrs_checker: get_type_from_literal_type_node calls
  * check_expression). M.Fuel is a pool of such nodes, one per (position, token,
  * token), resolved lazily. Block L of a position draws the node keyed by the
- * position, its token and the token L + 1 positions back, so nearly every
- * block of a new hover finds an unused node and zeroes the counter.
+ * position, its token and the token L + 1 positions back shifted by L (so a
+ * run of equal characters still gives every block its own node). Nearly every
+ * block of a new hover therefore finds an unused node and zeroes the counter.
  *
  * Without this only the first hover of an editor session works (the model's
  * own tables supply resets while they are cold), and deeper models fail
@@ -316,7 +317,9 @@ type Refuel<
   L extends unknown[],
 > = M.Fuel[Pos["length"] & keyof M.Fuel] extends infer ByToken
   ? ByToken[Tokens[Pos["length"]] & keyof ByToken] extends infer Pool
-    ? Pool[(Pos extends [...L, unknown, ...infer P] ? Tokens[P["length"]] : L["length"]) &
+    ? Pool[M.FuelKey[L["length"]][Pos extends [...L, unknown, ...infer P]
+        ? Tokens[P["length"]]
+        : L["length"]] &
         keyof Pool]
     : never
   : never;
