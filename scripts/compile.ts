@@ -282,27 +282,51 @@ ${positions.map((offset) => `  [${positions.map((pos) => (pos + offset) % block_
 `);
 out.push(matrix("Head", program.head));
 {
-  // See Refuel in src/engine. A pool of literal type nodes keyed by (position,
-  // token, token), each resolved lazily the first time it is looked up.
+  // See Refuel in src/engine. A pool of literal type nodes, each resolved lazily
+  // the first time it is looked up: Fuel[position][layer][hash of the tokens so far].
+  // Three independent 8-bit rolling hashes (layer L reads hash L mod 3); each step
+  // is a permutation of the state for a fixed token, so two token sequences that
+  // differ keep different hashes even when they continue identically.
   const ids = program.vocab.map((_, i) => i);
-  // Large vocabularies fold the second token into 16 buckets to bound the pool.
-  const buckets = Math.min(ids.length, ids.length > 64 ? 16 : ids.length);
-  const inner = `{${ids
-    .slice(0, buckets)
-    .map((i) => `${i}:0`)
-    .join(";")}}`;
-  const perToken = `{${ids.map((i) => `${i}:${inner}`).join(";")}}`;
+  let h = 0x9e3779b9;
+  const rand = () => {
+    h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+    h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+    return (h ^= h >>> 15) >>> 0;
+  };
+  const mixes = [0, 1, 2].map(() => {
+    const perm = Array.from({ length: 256 }, (_, i) => i);
+    for (let i = 255; i > 0; i--) {
+      const j = rand() % (i + 1);
+      [perm[i], perm[j]] = [perm[j]!, perm[i]!];
+    }
+    const offset = ids.map(() => rand() % 256);
+    return Array.from({ length: 256 }, (_, state) =>
+      ids.map((t) => perm[(state + offset[t]!) % 256]!),
+    );
+  });
+  const slots = `{${Array.from({ length: 256 }, (_, i) => `${i}:0`).join(";")}}`;
+  const byLayer = `{${layers.map((_, l) => `${l}:${slots}`).join(";")}}`;
   out.push(`/**
  * Budget resets for the checker's 5M-instantiation counter (see Refuel in src/engine):
- * a distinct literal type node per (position, token, bucket of another token).
+ * Fuel[position][layer][prefix hash], one literal type node each.
  */
 export type Fuel = {
-${Array.from({ length: block_size }, (_, p) => `  ${p}: ${perToken};`).join("\n")}
+${Array.from({ length: block_size }, (_, p) => `  ${p}: ${byLayer};`).join("\n")}
 };
-/** FuelKey[layer][token] = (token + layer) mod buckets: a different pool node per layer. */
-export type FuelKey = [
-${layers.map((_, l) => `  [${ids.map((i) => (i + l) % buckets).join(", ")}],`).join("\n")}
-];
+/** Which of the three prefix hashes each layer's reset node is keyed by. */
+export type FuelPick = [${layers.map((_, l) => l % 3).join(", ")}];
+${mixes
+  .map(
+    (
+      m,
+      i,
+    ) => `/** Rolling hash ${i}: Mix${i}[state][token] (a permutation of the state per token). */
+export type Mix${i} = [
+${m.map((row) => `  [${row.join(", ")}],`).join("\n")}
+];`,
+  )
+  .join("\n")}
 `);
 }
 {
@@ -310,10 +334,10 @@ ${layers.map((_, l) => `  [${ids.map((i) => (i + l) % buckets).join(", ")}],`).j
   const all = Array.from({ length: n_embd }, (_, i) => i);
   const heads = Array.from({ length: n_head }, (_, h) => all.slice(h * hd, (h + 1) * hd));
   out.push(`/** Split a ${n_embd}-vector into ${n_head} heads of ${hd}, and back. */
-export type Heads<X> = X extends readonly [${all.map((i) => `infer ${v(i)}`).join(", ")}]
+export type Heads<X> = X extends [${all.map((i) => `infer ${v(i)}`).join(", ")}]
   ? [${heads.map((h) => `[${h.map(v).join(", ")}]`).join(", ")}]
   : never;
-export type FlatHeads<H> = H extends readonly [${heads.map((_, h) => `infer H${h} extends readonly string[]`).join(", ")}]
+export type FlatHeads<H> = H extends [${heads.map((_, h) => `infer H${h} extends readonly string[]`).join(", ")}]
   ? [${heads.map((_, h) => `...H${h}`).join(", ")}]
   : never;
 `);

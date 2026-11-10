@@ -21,6 +21,12 @@ type Nums = readonly number[];
 export type SamplingSeed = M.SamplingSeed;
 
 // ---------------------------------------------------------------- helpers
+//
+// Tuple patterns are mutable (`X extends [infer H, ...infer R]`) because every
+// tuple here is: a match then instantiates to the very same type, which the
+// checker accepts by identity. A `readonly [...]` pattern relates the two
+// structurally and records the result in the checker's relation cache, which
+// never empties and fails every comparison past ~16M entries (CLAUDE.md).
 
 export type PosPart<S> = S extends `-${string}` ? "" : S;
 export type NegPart<S> = S extends `-${infer A}` ? A : "";
@@ -35,11 +41,7 @@ export type Dbl<S extends string> = `${S}${S}`;
  * [threshold, ifLess, ifGreaterOrEqual] nodes with outputs at the leaves (see
  * scripts/compile.ts). Each level is one prefix match on a unary string.
  */
-export type Walk<A extends string, N> = N extends readonly [
-  infer T extends string,
-  infer Lo,
-  infer Hi,
-]
+export type Walk<A extends string, N> = N extends [infer T extends string, infer Lo, infer Hi]
   ? A extends `${T}${string}`
     ? Walk<A, Hi>
     : Walk<A, Lo>
@@ -64,16 +66,13 @@ export type AddClamped<X, D> = {
 // ---------------------------------------------------------------- LayerNorm
 
 /** @internal */
-export type SumS<X, P extends string = "", N extends string = ""> = X extends readonly [
-  infer H,
-  ...infer R,
-]
+export type SumS<X, P extends string = "", N extends string = ""> = X extends [infer H, ...infer R]
   ? H extends `-${infer A}`
     ? SumS<R, P, `${N}${A}`>
     : SumS<R, `${P}${H & string}`, N>
   : SubU<P, N>;
 /** Sum of squares as two unary limbs [HI, LO] (c^2 = 512 hi + lo). */
-export type SumSq<C, HI extends string = "", LO extends string = ""> = C extends readonly [
+export type SumSq<C, HI extends string = "", LO extends string = ""> = C extends [
   infer H,
   ...infer R,
 ]
@@ -93,7 +92,7 @@ export type Normalize<S> = S extends [infer HI extends string, infer LO extends 
     : never
   : never;
 /** Walk the sigma tree: compare SS = 512 HI + LO against each node's threshold. */
-export type WalkSigma<HI extends string, LO extends string, N> = N extends readonly [
+export type WalkSigma<HI extends string, LO extends string, N> = N extends [
   infer H1 extends string,
   infer H0 extends string,
   infer L0 extends string,
@@ -124,7 +123,7 @@ export type Divisors<S1 extends string> =
       : never
     : never;
 /** Binary long division: bits of floor(A / D[last]), up to 8 bits (saturates at 255). */
-export type LongDiv<A extends string, D, Bits extends string = ""> = D extends readonly [
+export type LongDiv<A extends string, D, Bits extends string = ""> = D extends [
   infer H extends string,
   ...infer R,
 ]
@@ -156,12 +155,12 @@ export type LayerNorm<X> =
 // ---------------------------------------------------------------- attention
 
 /** Scores of one query against every cached key: concat of q_i * k_i parts. */
-export type Score<QP, QN, K, P extends string = "", N extends string = ""> = K extends readonly [
+export type Score<QP, QN, K, P extends string = "", N extends string = ""> = K extends [
   infer k,
   ...infer KR,
 ]
-  ? QP extends readonly [infer qp, ...infer QPR]
-    ? QN extends readonly [infer qn, ...infer QNR]
+  ? QP extends [infer qp, ...infer QPR]
+    ? QN extends [infer qn, ...infer QNR]
       ? Score<
           QPR,
           QNR,
@@ -192,11 +191,13 @@ export type Gt<A, B> = A extends `-${infer a}`
     : A extends `${B & string}1${string}`
       ? true
       : false;
-export type MaxS<
-  X,
-  Best = X extends readonly [infer F, ...unknown[]] ? F : "",
-> = X extends readonly [infer H, ...infer R] ? MaxS<R, Gt<H, Best> extends true ? H : Best> : Best;
-export type Cat<X, Acc extends string = ""> = X extends readonly [infer H, ...infer R]
+export type MaxS<X, Best = X extends [infer F, ...unknown[]] ? F : ""> = X extends [
+  infer H,
+  ...infer R,
+]
+  ? MaxS<R, Gt<H, Best> extends true ? H : Best>
+  : Best;
+export type Cat<X, Acc extends string = ""> = X extends [infer H, ...infer R]
   ? Cat<R, `${Acc}${H & string}`>
   : Acc;
 
@@ -254,13 +255,10 @@ export type AppendKV<
   V,
   Acc extends unknown[] = [],
 > = Acc["length"] extends L
-  ? KV extends readonly [
-      readonly [infer Ks extends readonly unknown[], infer Vs extends readonly unknown[]],
-      ...infer Rest,
-    ]
+  ? KV extends [[infer Ks extends unknown[], infer Vs extends unknown[]], ...infer Rest]
     ? [...Acc, [[...Ks, K], [...Vs, V]], ...Rest]
     : never
-  : KV extends readonly [infer H, ...infer R]
+  : KV extends [infer H, ...infer R]
     ? AppendKV<R, L, K, V, [...Acc, H]>
     : never;
 
@@ -272,7 +270,7 @@ export type Block<L extends number, X, KV extends readonly unknown[]> =
       ? M.RQVec<"rqK", L, Matvec<"k", L, Z>> extends infer K extends Nums
         ? M.RQVec<"rqV", L, Matvec<"v", L, Z>> extends infer V extends Nums
           ? AppendKV<KV, L, Heads<K>, Heads<V>> extends infer KV2 extends readonly unknown[]
-            ? KV2[L] extends readonly [infer KC, infer VC]
+            ? KV2[L] extends [infer KC, infer VC]
               ? FlatHeads<AllHeads<Heads<Q>, KC, VC, Lay<L>, L>> extends infer O extends Strs
                 ? AddClamped<X, M.RQVec<"rqProj", L, Matvec<"proj", L, O>>> extends infer X2 extends
                     Strs
@@ -304,28 +302,38 @@ export type Block<L extends number, X, KV extends readonly unknown[]> =
  * The counter is zeroed per checked statement, which a hover never reaches, and
  * also, as a side effect, whenever a literal type node is resolved for the
  * first time (crates/tsrs_checker: get_type_from_literal_type_node calls
- * check_expression). M.Fuel is a pool of such nodes, one per (position, token,
- * token), resolved lazily. Block L of a position draws the node keyed by the
- * position, its token and the token L + 1 positions back shifted by L (so a
- * run of equal characters still gives every block its own node). Nearly every
- * block of a new hover therefore finds an unused node and zeroes the counter.
+ * check_expression). M.Fuel is a pool of such nodes, resolved lazily: block L of
+ * position P draws Fuel[P][L][hash of the tokens up to P]. Within a hover every
+ * block gets its own node. A later hover reuses a spent node only when its
+ * prefix hash collides with an earlier hover's (identical prefixes need no
+ * reset: the checker has cached their work). Layers alternate between three
+ * independent hashes, so a collision leaves at most every third block of a
+ * position without a reset.
  *
  * Without this only the first hover of an editor session works (the model's
  * own tables supply resets while they are cold), and deeper models fail
  * part-way through the context.
  */
-type Refuel<
-  Tokens extends number[],
-  Pos extends unknown[],
-  L extends unknown[],
-> = M.Fuel[Pos["length"] & keyof M.Fuel] extends infer ByToken
-  ? ByToken[Tokens[Pos["length"]] & keyof ByToken] extends infer Pool
-    ? Pool[M.FuelKey[L["length"]][Pos extends [...L, unknown, ...infer P]
-        ? Tokens[P["length"]]
-        : L["length"]] &
-        keyof Pool]
-    : never
-  : never;
+type Refuel<Tokens extends number[], Pos extends unknown[], L extends unknown[]> =
+  PrefixHash<Tokens, [...Pos, 0]> extends infer H extends readonly number[]
+    ? M.Fuel[Pos["length"] & keyof M.Fuel] extends infer ByLayer
+      ? ByLayer[L["length"] & keyof ByLayer] extends infer Pool
+        ? Pool[H[M.FuelPick[L["length"]] & keyof H] & keyof Pool]
+        : never
+      : never
+    : never;
+/** The three rolling hashes (M.Mix0..2) of the first Left["length"] tokens. */
+type PrefixHash<
+  T,
+  Left extends unknown[],
+  H0 extends number = 0,
+  H1 extends number = 0,
+  H2 extends number = 0,
+> = Left extends [unknown, ...infer L2]
+  ? T extends [infer X extends number, ...infer R]
+    ? PrefixHash<R, L2, M.Mix0[H0][X] & number, M.Mix1[H1][X] & number, M.Mix2[H2][X] & number>
+    : [H0, H1, H2]
+  : [H0, H1, H2];
 
 /** All blocks of the position Pos of Tokens. Returns [x, kv]. */
 /** @internal */
@@ -355,8 +363,8 @@ export type Argmax<
   X,
   I extends unknown[] = [],
   Best extends number = 0,
-  B = X extends readonly [infer F, ...unknown[]] ? F : "",
-> = X extends readonly [infer H, ...infer R]
+  B = X extends [infer F, ...unknown[]] ? F : "",
+> = X extends [infer H, ...infer R]
   ? Gt<H, B> extends true
     ? Argmax<R, [...I, 0], I["length"], H>
     : Argmax<R, [...I, 0], Best, B>
@@ -394,13 +402,13 @@ export type Encode<S extends string, Acc extends number[] = []> = S extends ""
 /** Walk the trie along S; [id, rest of S] of the longest piece that is a prefix of S. */
 type Longest<S extends string, Node, Best = null> = S extends `${infer C}${infer R}`
   ? C extends keyof Node
-    ? Node[C] extends readonly [infer Id, infer Next]
+    ? Node[C] extends [infer Id, infer Next]
       ? Longest<R, Next, Id extends number ? [Id, R] : Best>
       : Best
     : Best
   : Best;
 type Quote<C extends string> = C extends "\n" ? "\\n" : `'${C}'`;
-export type Decode<T, Acc extends string = ""> = T extends readonly [infer I, ...infer R]
+export type Decode<T, Acc extends string = ""> = T extends [infer I, ...infer R]
   ? Decode<R, `${Acc}${M.Vocab[I & keyof M.Vocab] & string}`>
   : Acc;
 export type Tuple<N extends number, T extends unknown[] = []> = T["length"] extends N
