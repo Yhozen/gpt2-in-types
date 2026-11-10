@@ -54,7 +54,10 @@ export interface Program {
     block_size: number;
     vocab_size: number;
   };
+  /** Token pieces by id (single characters, or subwords from scripts/tokenizer.py). */
   vocab: string[];
+  /** End-of-story token (its piece is ""); generation stops after producing it. */
+  eos?: number;
   /** Embeddings in residual units. */
   etok: number[][];
   epos: number[][];
@@ -185,6 +188,7 @@ export function generate(
   const tokens = [...prompt];
   const cache = p.layers.map(() => ({ k: [] as number[][][], v: [] as number[][][] }));
   for (let pos = 0; pos < tokens.length && pos < p.config.block_size; pos++) {
+    if (tokens[tokens.length - 1] === p.eos) break;
     const x = forward(p, tokens[pos]!, pos, cache);
     if (pos === tokens.length - 1 && tokens.length - prompt.length < n) {
       const acc = matvec(p.head, layerNorm(x, p));
@@ -195,10 +199,23 @@ export function generate(
   return tokens;
 }
 
-export const encode = (p: Program, s: string): number[] =>
-  s.split("").map((c) => {
-    const i = p.vocab.indexOf(c);
-    if (i < 0) throw new Error(`character ${JSON.stringify(c)} is not in the vocabulary`);
-    return i;
-  });
+const pieceIds = new WeakMap<Program, Map<string, number>>();
+/** Tokenize by greedy longest match: at each point, the longest piece that is a prefix. */
+export const encode = (p: Program, s: string): number[] => {
+  let ids = pieceIds.get(p);
+  if (!ids) {
+    ids = new Map(p.vocab.flatMap((piece, i) => (piece ? [[piece, i] as const] : [])));
+    pieceIds.set(p, ids);
+  }
+  const longest = Math.max(...p.vocab.map((piece) => piece.length));
+  const out: number[] = [];
+  for (let i = 0; i < s.length;) {
+    let n = Math.min(longest, s.length - i);
+    while (n > 0 && !ids.has(s.slice(i, i + n))) n--;
+    if (n === 0) throw new Error(`character ${JSON.stringify(s[i])} is not in the vocabulary`);
+    out.push(ids.get(s.slice(i, i + n))!);
+    i += n;
+  }
+  return out;
+};
 export const decode = (p: Program, ids: number[]): string => ids.map((i) => p.vocab[i]).join("");

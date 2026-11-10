@@ -76,6 +76,19 @@ check(
   JSON.stringify(ref.decode(p, ref.generate(p, ref.encode(p, "Once"), 3, "greedy"))),
 );
 
+// Tokenization: greedy longest match, as the reference.
+for (const [name, text] of [
+  ["story", 'Once upon a time, there was a little girl named Lily. "Hello!" she said.'],
+  ["words", "The friends wanted something together"],
+  ["odd", "Zq x-y;:  ?!\n'A"],
+] as const) {
+  check(
+    `Encode_${name}`,
+    `E.Encode<${JSON.stringify(text)}>`,
+    `[${ref.encode(p, text).join(", ")}]`,
+  );
+}
+
 // Prompts the model cannot encode become readable errors, not `never` or `any`.
 check(
   "Error_unknown_character",

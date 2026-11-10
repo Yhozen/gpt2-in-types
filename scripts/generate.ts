@@ -58,7 +58,7 @@ if (out) {
     ``,
     `type S0 = Start<${quote(prompt)}>;`,
   ];
-  const positions = prompt.length + n - 1;
+  const positions = encode(program, prompt).length + n - 1;
   let step = 0;
   for (let done = 0; done < positions; done += chunk, step++) {
     lines.push(

@@ -62,14 +62,14 @@ def load(qat, dtype):
 def main():
     qat_path = ROOT / os.environ.get("QAT", "model/qat.json")
     qat = json.loads(qat_path.read_text())
-    text = train.load_text()
-    chars = sorted(set(text))
-    assert chars == qat["vocab"], "checkpoint vocabulary differs from the dataset's"
-    stoi = {c: i for i, c in enumerate(chars)}
+    # The validation text, tokenized with the checkpoint's own vocabulary.
+    text = train.raw_text()
+    val_text = text[int(0.9 * len(text)) :]
+    val = train.encode_text(val_text, qat["vocab"], qat.get("eos"))
+    chars_per_token = len(val_text) / len(val)
     bs = qat["config"]["block_size"]
-    val = text[int(0.9 * len(text)) :]
     step = (len(val) - bs - 1) // WINDOWS
-    ids = torch.tensor([[stoi[c] for c in val[i * step : i * step + bs + 1]] for i in range(WINDOWS)])
+    ids = torch.tensor([val[i * step : i * step + bs + 1] for i in range(WINDOWS)])
     x, y = ids[:, :-1], ids[:, 1:]
 
     out = {}
@@ -81,7 +81,7 @@ def main():
         out[dtype] = (acc.round().long(), (acc - acc.round()).abs().max().item(), F.cross_entropy(logits.flatten(0, 1), y.flatten()).item())
     a64, a32 = out[torch.float64][0], out[torch.float32][0]
     for dtype, (_, frac, loss) in out.items():
-        print(f"{str(dtype):>14}: val loss {loss:.4f} over {WINDOWS} windows; max distance of an accumulator from an integer {frac:.2e}")
+        print(f"{str(dtype):>14}: val loss {loss:.4f} nats/token ({loss / chars_per_token:.4f} nats/char) over {WINDOWS} windows; max distance of an accumulator from an integer {frac:.2e}")
     diff = (a64 != a32).any(-1)
     print(f"positions where float32 and float64 accumulators differ: {diff.sum().item()} of {diff.numel()}")
 
@@ -94,7 +94,7 @@ def main():
     }))
     # The full evaluation set, for scripts/parity.ts (not committed).
     (ROOT / ".run").mkdir(exist_ok=True)
-    (ROOT / ".run" / "parity-full.json").write_text(json.dumps({"tokens": ids.tolist(), "acc": a64.tolist(), "gamma": qat["head"]["gamma"]}))
+    (ROOT / ".run" / "parity-full.json").write_text(json.dumps({"tokens": ids.tolist(), "acc": a64.tolist(), "gamma": qat["head"]["gamma"], "chars_per_token": chars_per_token}))
     print(f"wrote {dest.relative_to(ROOT)} ({STORED} windows) and .run/parity-full.json ({WINDOWS})")
 
 

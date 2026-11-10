@@ -35,6 +35,9 @@ export type Seed_63 = Expect<Equal<E.Generate<"Once", 3, "sample", 63>, "Once up
 export type Seed_63_steps = Expect<Equal<E.Output<E.Steps<E.Steps<E.Start<"Once">, 1, "sample", 63>, 2, "sample", 63>>, "Once up">>;
 export type Seed_63_advance = Expect<Equal<E.Output<E.Advance<E.Advance<E.Start<"Once">, 3, "sample", 63>, 3, "sample", 63>>, "Once up">>;
 export type Greedy_ignores_seed = Expect<Equal<E.Generate<"Once", 3, "greedy", 63>, "Once up">>;
+export type Encode_story = Expect<Equal<E.Encode<"Once upon a time, there was a little girl named Lily. \"Hello!\" she said.">, [25, 50, 39, 41, 1, 57, 52, 51, 50, 1, 37, 1, 56, 45, 49, 41, 5, 1, 56, 44, 41, 54, 41, 1, 59, 37, 55, 1, 37, 1, 48, 45, 56, 56, 48, 41, 1, 43, 45, 54, 48, 1, 50, 37, 49, 41, 40, 1, 22, 45, 48, 61, 7, 1, 3, 18, 41, 48, 48, 51, 2, 3, 1, 55, 44, 41, 1, 55, 37, 45, 40, 7]>>;
+export type Encode_words = Expect<Equal<E.Encode<"The friends wanted something together">, [30, 44, 41, 1, 42, 54, 45, 41, 50, 40, 55, 1, 59, 37, 50, 56, 41, 40, 1, 55, 51, 49, 41, 56, 44, 45, 50, 43, 1, 56, 51, 43, 41, 56, 44, 41, 54]>>;
+export type Encode_odd = Expect<Equal<E.Encode<"Zq x-y;:  ?!\n'A">, [36, 53, 1, 60, 6, 61, 9, 8, 1, 1, 10, 2, 0, 4, 11]>>;
 export type Error_unknown_character = Expect<Equal<E.Generate<"3 pigs", 2>, "Error: the character '3' is not in the model's vocabulary">>;
 export type Error_empty_prompt = Expect<Equal<E.Generate<"", 2>, "Error: the prompt is empty">>;
 

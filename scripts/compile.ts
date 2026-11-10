@@ -103,6 +103,7 @@ const noise: number[][] = Array.from({ length: block_size }, () =>
 const program: Program = {
   config: qat.config,
   vocab: qat.vocab,
+  ...(qat.eos === undefined ? {} : { eos: qat.eos }),
   etok: qat.wte.map((r: number[]) => r.map((v) => rnd(v / sr))),
   epos: qat.wpe.map((r: number[]) => r.map((v) => rnd(v / sr))),
   layers,
@@ -211,7 +212,13 @@ type Strs = readonly string[];
 
 export type Config = { nLayer: ${n_layer}; nHead: ${n_head}; nEmbd: ${n_embd}; blockSize: ${block_size} };
 export type Vocab = [${program.vocab.map(str).join(", ")}];
-export type CharToId = { ${program.vocab.map((c, i) => `${str(c)}: ${i}`).join("; ")} };
+/** End-of-story token id (never when the vocabulary has none). */
+export type Eos = ${program.eos ?? "never"};
+/**
+ * The pieces as a trie for greedy longest-match tokenization: character ->
+ * [id of the piece that ends here (null if none), longer pieces].
+ */
+export type Trie = ${trie()};
 export type Etok = [${program.etok.map((r) => `[${r.join(", ")}]`).join(",\n  ")}];
 export type Epos = [${program.epos.map((r) => `[${r.join(", ")}]`).join(",\n  ")}];
 export type Mean = ${tree(program.mean, "ge", una)};
@@ -278,18 +285,23 @@ out.push(matrix("Head", program.head));
   // See Refuel in src/engine. A pool of literal type nodes keyed by (position,
   // token, token), each resolved lazily the first time it is looked up.
   const ids = program.vocab.map((_, i) => i);
-  const inner = `{${ids.map((i) => `${i}:0`).join(";")}}`;
+  // Large vocabularies fold the second token into 16 buckets to bound the pool.
+  const buckets = Math.min(ids.length, ids.length > 64 ? 16 : ids.length);
+  const inner = `{${ids
+    .slice(0, buckets)
+    .map((i) => `${i}:0`)
+    .join(";")}}`;
   const perToken = `{${ids.map((i) => `${i}:${inner}`).join(";")}}`;
   out.push(`/**
  * Budget resets for the checker's 5M-instantiation counter (see Refuel in src/engine):
- * a distinct literal type node per (position, token, token).
+ * a distinct literal type node per (position, token, bucket of another token).
  */
 export type Fuel = {
 ${Array.from({ length: block_size }, (_, p) => `  ${p}: ${perToken};`).join("\n")}
 };
-/** FuelKey[layer][token] = (token + layer) mod vocabulary: a different pool node per layer. */
+/** FuelKey[layer][token] = (token + layer) mod buckets: a different pool node per layer. */
 export type FuelKey = [
-${layers.map((_, l) => `  [${ids.map((i) => (i + l) % ids.length).join(", ")}],`).join("\n")}
+${layers.map((_, l) => `  [${ids.map((i) => (i + l) % buckets).join(", ")}],`).join("\n")}
 ];
 `);
 }
@@ -367,6 +379,26 @@ export type ProdPV = { ${range(0, 63)
   )
   .join(";\n  ")} };
 `);
+
+function trie(): string {
+  interface Node {
+    id: number | null;
+    next: Map<string, Node>;
+  }
+  const rootNode: Node = { id: null, next: new Map() };
+  program.vocab.forEach((piece, id) => {
+    if (!piece) return;
+    let node = rootNode;
+    for (const c of piece) {
+      if (!node.next.has(c)) node.next.set(c, { id: null, next: new Map() });
+      node = node.next.get(c)!;
+    }
+    node.id = id;
+  });
+  const emit = (node: Node): string =>
+    `{${[...node.next].map(([c, n]) => `${str(c)}: [${n.id}, ${emit(n)}]`).join("; ")}}`;
+  return emit(rootNode);
+}
 
 function sigmaTree(): string {
   const sig = (ss: number) => sqrt[sqrtKeyOf(ss)]!;

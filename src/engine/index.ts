@@ -375,18 +375,30 @@ type AddNoise<A, N> = { [K in keyof A]: AddS<A[K] & string, N[K & keyof N] & str
 // ---------------------------------------------------------------- generation
 
 /**
- * Prompt -> token ids. A character outside the model's vocabulary (or an empty
- * prompt) yields an error message instead, which Start, Steps, Advance and
- * Output pass through, so the hover shows what went wrong.
+ * Prompt -> token ids, by greedy longest match over the vocabulary's pieces
+ * (as encode in src/reference/int.ts). A character outside the model's
+ * vocabulary (or an empty prompt) yields an error message instead, which
+ * Start, Steps, Advance and Output pass through, so the hover shows what went
+ * wrong.
  */
 /** @internal */
-export type Encode<S extends string, Acc extends number[] = []> = S extends `${infer C}${infer R}`
-  ? C extends keyof M.CharToId
-    ? Encode<R, [...Acc, M.CharToId[C]]>
-    : `Error: the character ${Quote<C>} is not in the model's vocabulary`
-  : Acc extends []
+export type Encode<S extends string, Acc extends number[] = []> = S extends ""
+  ? Acc extends []
     ? "Error: the prompt is empty"
-    : Acc;
+    : Acc
+  : Longest<S, M.Trie> extends [infer Id extends number, infer Rest extends string]
+    ? Encode<Rest, [...Acc, Id]>
+    : S extends `${infer C}${string}`
+      ? `Error: the character ${Quote<C>} is not in the model's vocabulary`
+      : never;
+/** Walk the trie along S; [id, rest of S] of the longest piece that is a prefix of S. */
+type Longest<S extends string, Node, Best = null> = S extends `${infer C}${infer R}`
+  ? C extends keyof Node
+    ? Node[C] extends readonly [infer Id, infer Next]
+      ? Longest<R, Next, Id extends number ? [Id, R] : Best>
+      : Best
+    : Best
+  : Best;
 type Quote<C extends string> = C extends "\n" ? "\\n" : `'${C}'`;
 export type Decode<T, Acc extends string = ""> = T extends readonly [infer I, ...infer R]
   ? Decode<R, `${Acc}${M.Vocab[I & keyof M.Vocab] & string}`>
@@ -400,7 +412,8 @@ export type EmptyKV<L extends unknown[] = []> = L["length"] extends M.Config["nL
   : [[[], []], ...EmptyKV<[...L, 0]>];
 
 /**
- * Generation state: [tokens, position counter, KV cache].
+ * Generation state: [tokens, position counter, KV cache]. Generation ends at the
+ * context size or once the model produces the end-of-story token (M.Eos).
  * Steps runs positions until N more tokens exist (or the context is full), so a
  * long generation can be split across statements: the CLI allows ~5M type
  * instantiations per statement (for hovers, see Refuel).
@@ -442,25 +455,27 @@ export type Run<
   Seed extends SamplingSeed = 0,
 > = Pos["length"] extends M.Config["blockSize"]
   ? [Tokens, Pos, KV]
-  : [...Pos, 0]["length"] extends Tokens["length"]
-    ? Left extends [unknown, ...infer Left2 extends unknown[]]
-      ? Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
-        ? Run<
-            [...Tokens, NextToken<X, Pos["length"], Mode, Seed>],
-            [...Pos, 0],
-            Left2,
-            KV2,
-            Mode,
-            Seed
-          >
-        : never
-      : [Tokens, Pos, KV]
-    : // A prompt position: only the KV cache matters.
-      Layers<Tokens, Pos, KV> extends [unknown, infer KV2 extends readonly unknown[]]
-      ? Run<Tokens, [...Pos, 0], Left, KV2, Mode, Seed>
-      : never;
+  : Tokens extends [...unknown[], M.Eos]
+    ? [Tokens, Pos, KV]
+    : [...Pos, 0]["length"] extends Tokens["length"]
+      ? Left extends [unknown, ...infer Left2 extends unknown[]]
+        ? Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
+          ? Run<
+              [...Tokens, NextToken<X, Pos["length"], Mode, Seed>],
+              [...Pos, 0],
+              Left2,
+              KV2,
+              Mode,
+              Seed
+            >
+          : never
+        : [Tokens, Pos, KV]
+      : // A prompt position: only the KV cache matters.
+        Layers<Tokens, Pos, KV> extends [unknown, infer KV2 extends readonly unknown[]]
+        ? Run<Tokens, [...Pos, 0], Left, KV2, Mode, Seed>
+        : never;
 
-/** Prompt plus N generated characters. Seed rotates noise rows; zero preserves existing output. */
+/** Prompt plus N generated tokens. Seed rotates noise rows; zero preserves existing output. */
 export type Generate<
   Prompt extends string,
   N extends number,
@@ -510,16 +525,18 @@ type RunK<
 > = K extends [unknown, ...infer K2 extends unknown[]]
   ? Pos["length"] extends M.Config["blockSize"]
     ? [Tokens, Pos, KV]
-    : Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
-      ? [...Pos, 0]["length"] extends Tokens["length"]
-        ? RunK<
-            [...Tokens, NextToken<X, Pos["length"], Mode, Seed>],
-            [...Pos, 0],
-            K2,
-            KV2,
-            Mode,
-            Seed
-          >
-        : RunK<Tokens, [...Pos, 0], K2, KV2, Mode, Seed>
-      : never
+    : Tokens extends [...unknown[], M.Eos]
+      ? [Tokens, Pos, KV]
+      : Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
+        ? [...Pos, 0]["length"] extends Tokens["length"]
+          ? RunK<
+              [...Tokens, NextToken<X, Pos["length"], Mode, Seed>],
+              [...Pos, 0],
+              K2,
+              KV2,
+              Mode,
+              Seed
+            >
+          : RunK<Tokens, [...Pos, 0], K2, KV2, Mode, Seed>
+        : never
   : [Tokens, Pos, KV];

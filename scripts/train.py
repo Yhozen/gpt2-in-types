@@ -39,6 +39,7 @@ re-derived in scripts/compile.ts; src/reference/int.ts is the exact spec.
 import json
 import math
 import os
+import re
 import time
 import urllib.request
 from pathlib import Path
@@ -64,22 +65,104 @@ TINYSTORIES = ROOT / "model" / "tinystories-valid.txt"
 TINYSTORIES_URL = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt"
 
 
+TRAIN_URL = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-train.txt"
+# Optional: also train on the first TRAIN_MB megabytes of the TinyStories train split.
+TRAIN_MB = int(os.environ.get("TRAIN_MB", 0))
+# Optional: a subword vocabulary from scripts/tokenizer.py ({"pieces": [...], "eos": id}).
+TOKENIZER = os.environ.get("TOKENIZER")
+KEEP = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,!?'\"-:;\n")
+EOT = "\x00"  # stands for <|endoftext|> until the text is encoded
+
+
+def normalize(t):
+    """TinyStories text reduced to a small ASCII character set; <|endoftext|> becomes EOT."""
+    for a, b in (("<|endoftext|>", EOT), ("\u201c", '"'), ("\u201d", '"'), ("\u2019", "'"), ("\u2018", "'"), ("\u2013", "-"), ("\u2014", "-"), ("\u2026", "...")):
+        t = t.replace(a, b)
+    return "".join(c for c in t if c in KEEP or c == EOT)
+
+
+def raw_text():
+    """Normalized TinyStories validation file (Eldan & Li 2023, arXiv:2305.07759), with EOT marks."""
+    if not TINYSTORIES.exists():
+        TINYSTORIES.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(TINYSTORIES_URL, TINYSTORIES)
+    return normalize(TINYSTORIES.read_text(encoding="utf8", errors="ignore"))
+
+
+def extra_train_text(mb):
+    """The first `mb` megabytes of the TinyStories train split, cut at a story boundary."""
+    path = ROOT / "model" / f"tinystories-train-{mb}m.txt"
+    if not path.exists():
+        req = urllib.request.Request(TRAIN_URL, headers={"Range": f"bytes=0-{mb * 1024 * 1024 - 1}"})
+        with urllib.request.urlopen(req) as r:
+            path.write_bytes(r.read())
+    t = path.read_text(encoding="utf8", errors="ignore")
+    return normalize(t[: t.rindex("<|endoftext|>") + len("<|endoftext|>")])
+
+
 def load_text():
-    """Tiny Shakespeare as is, or TinyStories (Eldan & Li 2023, arXiv:2305.07759)
-    normalized to a small ASCII character set."""
+    """Tiny Shakespeare as is, or TinyStories with story boundaries as newlines."""
     if DATASET == "shakespeare":
         if not DATA.exists():
             DATA.parent.mkdir(parents=True, exist_ok=True)
             urllib.request.urlretrieve(URL, DATA)
         return DATA.read_text()
-    if not TINYSTORIES.exists():
-        TINYSTORIES.parent.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(TINYSTORIES_URL, TINYSTORIES)
-    t = TINYSTORIES.read_text(encoding="utf8", errors="ignore")
-    for a, b in (("<|endoftext|>", "\n"), ("\u201c", '"'), ("\u201d", '"'), ("\u2019", "'"), ("\u2018", "'"), ("\u2013", "-"), ("\u2014", "-"), ("\u2026", "...")):
-        t = t.replace(a, b)
-    keep = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,!?'\"-:;\n")
-    return "".join(c for c in t if c in keep)
+    return raw_text().replace(EOT, "\n")
+
+
+_UNITS = re.compile(EOT + r"| ?[A-Za-z]+| ?[^A-Za-z ]| ")
+
+
+def units(text):
+    """Pre-tokenization: optional space + a word, or optional space + one other character.
+    Pieces never span units, so greedy matching per unit equals greedy matching of the text."""
+    return _UNITS.findall(text)
+
+
+def encode_text(text, pieces, eos=None):
+    """Greedy longest-match tokenization (the rule of src/reference/int.ts and the type-level Encode).
+    EOT becomes the eos token, or a newline when the vocabulary has none."""
+    index = {p: i for i, p in enumerate(pieces) if p}
+    longest = max(map(len, index))
+    cache = {EOT: [eos if eos is not None else index["\n"]]}
+    out = []
+    for u in units(text):
+        ids = cache.get(u)
+        if ids is None:
+            ids, i = [], 0
+            while i < len(u):
+                for n in range(min(longest, len(u) - i), 0, -1):
+                    if u[i : i + n] in index:
+                        ids.append(index[u[i : i + n]])
+                        i += n
+                        break
+                else:
+                    raise ValueError(f"cannot encode {u[i]!r}")
+            cache[u] = ids
+        out.extend(ids)
+    return out
+
+
+def load_data():
+    """(pieces, eos, train ids, val ids, val characters). The validation text is always the
+    last 10% of the validation file, whatever the vocabulary or the extra training data."""
+    if DATASET == "shakespeare":
+        text = load_text()
+        pieces, eos = sorted(set(text)), None
+    else:
+        text = raw_text()
+        if TOKENIZER:
+            tok = json.loads((ROOT / TOKENIZER).read_text())
+            pieces, eos = tok["pieces"], tok["eos"]
+        else:
+            pieces, eos = sorted(set(text) - {EOT}), None
+    n = int(0.9 * len(text))
+    train_text, val_text = text[:n], text[n:]
+    if TRAIN_MB:
+        train_text = extra_train_text(TRAIN_MB) + train_text
+    return pieces, eos, encode_text(train_text, pieces, eos), encode_text(val_text, pieces, eos), len(val_text)
+
+
 # Integer ranges (magnitudes).
 R_MAX = 255  # residual stream
 Z_MAX = 127  # LayerNorm output (resolution sigma / 32)
@@ -287,12 +370,10 @@ def main():
     # The integer forward pass runs in float32 (MPS), which is exact only below 2^24.
     # The largest intermediate is LayerNorm's sum of squares, n_embd * (2 * R_MAX)^2.
     assert CFG["n_embd"] * (2 * R_MAX) ** 2 < 2**24, "n_embd > 64 needs a float64 sum of squares in int_layernorm"
-    text = load_text()
-    chars = sorted(set(text))
-    stoi = {ch: i for i, ch in enumerate(chars)}
-    data = torch.tensor([stoi[c] for c in text], dtype=torch.long)
-    n = int(0.9 * len(data))
-    train, val = data[:n], data[n:]
+    chars, eos, train_ids, val_ids, val_chars = load_data()
+    train, val = torch.tensor(train_ids, dtype=torch.long), torch.tensor(val_ids, dtype=torch.long)
+    per_char = len(val) / val_chars  # tokens per character: nats/token -> nats/char
+    print(f"vocab {len(chars)}, train {len(train)} tokens, val {len(val)} tokens ({1 / per_char:.2f} chars/token)", flush=True)
 
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     model = GPT(CFG, len(chars)).to(device)
@@ -313,6 +394,21 @@ def main():
         losses = [F.cross_entropy(model(x, quant).flatten(0, 1), y.flatten()).item() for x, y in (batch("val") for _ in range(40))]
         model.train()
         return sum(losses) / len(losses)
+
+    @torch.no_grad()
+    def evaluate_fixed():
+        """Integer loss over fixed, non-overlapping validation windows (comparable across runs)."""
+        model.eval()
+        count = min(2048, (len(val) - 1) // bs)
+        step = (len(val) - bs - 1) // count
+        total = 0.0
+        for i in range(0, count, BATCH):
+            ix = [j * step for j in range(i, min(count, i + BATCH))]
+            x = torch.stack([val[j : j + bs] for j in ix]).to(device)
+            y = torch.stack([val[j + 1 : j + bs + 1] for j in ix]).to(device)
+            total += F.cross_entropy(model(x, True).flatten(0, 1), y.flatten(), reduction="sum").item()
+        model.train()
+        return total / (count * bs)
 
     @torch.no_grad()
     def calibrate():
@@ -380,6 +476,8 @@ def main():
     if best[1] is not None:
         model.load_state_dict(best[1])
     print(f"final integer val loss {evaluate(True):.4f} (best checkpoint)", flush=True)
+    fixed = evaluate_fixed()
+    print(f"fixed-window integer val loss {fixed:.4f} nats/token = {fixed * per_char:.4f} nats/char", flush=True)
 
     def lin(l):
         wt, g = l.ternary()
@@ -393,6 +491,7 @@ def main():
         "config": {**CFG, "vocab_size": len(chars)},
         "ranges": dict(R=R_MAX, Z=Z_MAX, QKV=QKV_MAX, E=E_MAX, P=P_MAX, O=O_MAX, G=G_MAX, H=H_MAX),
         "vocab": chars,
+        **({"eos": eos} if eos is not None else {}),
         "sr": model.sr.item(),
         "wte": model.wte.detach().cpu().tolist(),
         "wpe": model.wpe.detach().cpu().tolist(),

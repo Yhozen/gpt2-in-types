@@ -21,3 +21,4 @@ model/input.txt
 __pycache__
 model/tinystories-valid.txt
 model/exp
+model/tinystories-train-*.txt

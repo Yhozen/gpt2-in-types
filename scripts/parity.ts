@@ -9,10 +9,11 @@ import { forward, layerNorm, matvec, type Program } from "../src/reference/int.t
 const root = new URL("../", import.meta.url);
 const read = (p: string) => JSON.parse(readFileSync(new URL(p, root), "utf8"));
 const program = read("model/program.json") as Program;
-const { tokens, acc, gamma } = read(".run/parity-full.json") as {
+const { tokens, acc, gamma, chars_per_token } = read(".run/parity-full.json") as {
   tokens: number[][];
   acc: number[][][];
   gamma: number;
+  chars_per_token: number;
 };
 
 let positions = 0;
@@ -38,5 +39,7 @@ tokens.forEach((window, w) => {
 console.log(
   `reference vs PyTorch (float64): ${mismatched} of ${positions} positions differ${firstMismatch && ` (first: ${firstMismatch})`}`,
 );
-console.log(`reference validation loss: ${(loss / positions).toFixed(4)} nats/char`);
+console.log(
+  `reference validation loss: ${(loss / positions).toFixed(4)} nats/token = ${(loss / positions / chars_per_token).toFixed(4)} nats/char (${chars_per_token.toFixed(2)} chars/token)`,
+);
 process.exitCode = mismatched ? 1 : 0;

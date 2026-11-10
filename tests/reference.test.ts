@@ -152,3 +152,32 @@ describe("parity with training", () => {
     });
   });
 });
+
+describe("tokenizer", () => {
+  test("decode inverts encode", () => {
+    for (const text of [
+      "Once upon a time, there was a little girl.",
+      'Tom said, "No!"\n\nThe end',
+    ]) {
+      expect(decode(p, encode(p, text))).toBe(text);
+    }
+  });
+
+  test("encode takes the longest piece at every step", () => {
+    const pieces = new Set(p.vocab.filter(Boolean));
+    const text = "The little friends wanted something";
+    let rest = text;
+    for (const id of encode(p, text)) {
+      const piece = p.vocab[id]!;
+      expect(rest.startsWith(piece)).toBe(true);
+      for (let n = piece.length + 1; n <= rest.length; n++)
+        expect(pieces.has(rest.slice(0, n))).toBe(false);
+      rest = rest.slice(piece.length);
+    }
+    expect(rest).toBe("");
+  });
+
+  test("unknown characters are rejected", () => {
+    expect(() => encode(p, "3 pigs")).toThrow(/not in the vocabulary/);
+  });
+});
