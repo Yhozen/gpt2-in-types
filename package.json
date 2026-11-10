@@ -2,7 +2,7 @@
   "name": "gpt2-in-types",
   "version": "0.0.0",
   "private": true,
-  "description": "GPT-2 running inside the TypeScript type checker: hover a type, get text.",
+  "description": "A GPT-2-style language model that runs inside the TypeScript type checker: hover a type, get a story.",
   "homepage": "https://github.com/Yhozen/gpt2-in-types#readme",
   "bugs": {
     "url": "https://github.com/Yhozen/gpt2-in-types/issues"

@@ -1,7 +1,8 @@
 # gpt2-in-types
 
-GPT-2 running inside the TypeScript type checker. Hover a type in your editor
-and the tooltip is a story the model just wrote:
+I tried to port GPT-2 to the TypeScript type system. GPT-2 didn't fit (yet), so
+I trained a language model that does. Hover a type in your editor and the
+tooltip is a story it just wrote:
 
 ```ts
 import type { Generate } from "./src/engine/index.ts";
@@ -12,14 +13,62 @@ export type Text = Generate<"Once upon a time", 64>;
 //             a big box in the park. Amy was very happy and wanted to play with the ball."
 ```
 
-No JavaScript runs at inference time. Tokenizer, embeddings, LayerNorm,
-causal multi-head attention with a KV cache, the GELU MLP, the LM head,
-sampling and the decode loop are all type aliases, evaluated by
+No JavaScript runs. The tokenizer, embeddings, LayerNorm, causal multi-head
+attention with a KV cache, the GELU MLP, the LM head, sampling and the decode
+loop are all type aliases, evaluated by
 [tsrs](https://github.com/oxc-project/tsrs) (the Rust port of the TypeScript 7
-checker) when the editor asks for the hover.
+checker) when the editor asks what the type is. It takes about half a minute
+and 8 GB of memory, which is a lot for a tooltip.
 
-Inspired by [GPT-2 in CSS](https://shubhampatil.dev/blog/gpt2-css). How it
-got here, dead ends included: [docs/JOURNEY.md](docs/JOURNEY.md).
+## But can it run an LLM?
+
+"But can it run Doom?" is settled for TypeScript types:
+[it can](https://socket.dev/blog/typescript-types-running-doom), at 12 days for
+the first frame. Then I saw
+[GPT-2 in CSS](https://shubhampatil.dev/blog/gpt2-css) run the real GPT-2 in a
+browser with no JavaScript, and remembered
+[TypeScript issue #14833](https://github.com/microsoft/TypeScript/issues/14833):
+the type system is Turing complete. So in theory a type checker can run a
+language model. In practice "Turing complete" says nothing about _fast_, and
+the checker has no multiplication, no floats and no `exp`, and gives up after a
+few million steps. What made it worth trying was tsrs, a checker fast enough
+that the idea seemed possible.
+
+The goal was GPT-2, hence the name. This is what I have so far.
+
+## What it is, and what it isn't
+
+**It is not OpenAI's GPT-2.** It is a model with GPT-2's architecture (learned
+token and position embeddings, pre-LayerNorm blocks, causal multi-head
+attention, GELU MLPs), shrunk and retrained so that it never multiplies:
+
+|            | GPT-2 small    | This model                                                                    |
+| ---------- | -------------- | ----------------------------------------------------------------------------- |
+| Parameters | 124M           | 1.66M                                                                         |
+| Shape      | 12 layers, 768 | 8 layers, 8 heads, 128 dimensions                                             |
+| Context    | 1,024 tokens   | 64 tokens (~140 characters)                                                   |
+| Vocabulary | 50,257 tokens  | 256 pieces                                                                    |
+| Weights    | OpenAI's       | ternary {−1, 0, 1}, trained from scratch                                      |
+| Trained on | the web        | [TinyStories](https://arxiv.org/abs/2305.07759) (stories for three-year-olds) |
+
+So it writes children's stories and nothing else, and it will tell you that
+Lily's ball belongs to Amy.
+
+**Why the real one didn't fit.** GPT-2 small needs about 124 million
+multiply-adds per token, and the type checker cannot multiply. Doing the
+arithmetic digit by digit in types (this project's first version) costs about
+700 type instantiations per multiply-add: roughly 87 billion per token, or
+about four hours per token at the speed tsrs manages on this workload. GPT-2
+in CSS could run the real weights because CSS has `calc()` and a font engine
+that computes weighted sums natively. A type checker's only native arithmetic
+is string concatenation, so the model here is trained to need nothing else.
+
+|                 | GPT-2 in CSS                     | This project                                |
+| --------------- | -------------------------------- | ------------------------------------------- |
+| Native multiply | yes: `calc()` and variable fonts | none: addition is string concatenation      |
+| Weights         | real GPT-2 small, 9-bit integers | ternary, trained from scratch               |
+| Speed           | 15–45 s per token                | ~0.5–1 s per token (64 tokens in one hover) |
+| Context         | 36 tokens                        | 64 tokens                                   |
 
 ## Results
 
@@ -38,27 +87,123 @@ A full 64-token context takes 35–75 s and about 8 GB of memory in the language
 server. Every output is checked token for token against an exact integer
 reference (`src/reference/int.ts`), and the reference in turn reproduces the
 PyTorch integer forward pass used in training exactly (`vp run parity`: 0 of
-16,384 positions differ). The sample above is noise offset 0, the default, not
+16,384 positions differ). The first sample is noise offset 0, the default, not
 a pick; the other two prompts and the offset 3 were chosen by reading the
 reference's outputs for offsets 0–15.
 
-The model is GPT-2's architecture at toy scale: 8 layers, 8 heads, 128
-dimensions and a 64-token context over a 256-piece subword vocabulary (about
-2.2 characters per token, so ~140 characters of context), trained on
-TinyStories (Eldan & Li 2023,
-[arXiv:2305.07759](https://arxiv.org/abs/2305.07759)). It has 1.66M parameters
-and an integer validation loss of 0.71 nats per character on 256 fixed
-validation windows, computed by the reference itself; the previous default, a
-4-layer, 64-dimension character model, scored 1.14 and wrote
-`Once upon a time, there was a proble whise. The little girl was s`. For
-comparison, the smallest pretrained TinyStories model (TinyStories-1M) is 64
-dimensions and 8 layers with a 50k-token vocabulary, and GPT-2 small is 124M
-parameters. See [Experiments](#experiments) and [Scaling](#scaling).
+The model's integer validation loss is 0.71 nats per character (perplexity 2.0
+per character) on 256 fixed validation windows, computed by the reference
+itself. All the models that came before it are in
+[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 
 **Editor setup matters:** tsrs's performance modes (`TSRS_FAST=1`) make this
 workload about 3× faster, but the language server does not enable them by
 default. `.vscode/settings.json` points the TypeScript 7 extension at
 `tsdk/tsgo`, a two-line wrapper that sets the variable.
+
+## The journey
+
+It took two days, several dead ends, and one bug that could only be explained
+by reading the checker's source.
+
+### 1. Arithmetic out of digit strings: it ran, and hovered as `any`
+
+The first version did the honest thing: numbers as strings of decimal digits,
+with addition and multiplication implemented digit by digit in types, like
+long arithmetic on paper. A 4-layer, 32-dimension character model trained on
+Tiny Shakespeare matched a BigInt reference digit for digit.
+
+Each multiply-add cost about 700 type instantiations and one position of the
+model about 25 million. The command line gives up on any statement after 5
+million, so generation was split into one statement per step. In the editor,
+the hover showed `type Text = any`. A model you cannot hover is not much of a
+demo.
+
+### 2. A model that only adds
+
+The second attempt started by measuring what the checker is fast at (the table
+is under [How it works](#the-cost-model-of-a-type-checker)). Two operations
+cost the same at any size: concatenating strings, and checking whether one
+string starts with another. If a number is a string of that many `1`s,
+addition is concatenation and comparison is a prefix match. Multiplication is
+still impossible, so the model must not multiply: ternary weights, lookup
+tables for everything non-linear, and training that runs the exact integer
+arithmetic the checker will use.
+
+One position went from 25 million instantiations to 1.2 million, and
+`Generate<"ROMEO:", 24>` hovered in about 2 seconds:
+
+```text
+ROMEO:
+Whe the crome the love
+```
+
+It ran. It was word salad.
+
+### 3. Better data beats a bigger model
+
+Switching the training data from Shakespeare to TinyStories, at the same size:
+
+```ts
+type Text = Generate<"Once upon a time", 24, "greedy">;
+// "Once upon a time, there was a little girl named Lily."
+```
+
+### 4. The ghost `any`
+
+Then the first hover in an editor session worked, and a second, different
+prompt returned `any`. The checker gives up once 5 million instantiations pile
+up since its counter was last reset. The command line resets it for every
+statement. A hover never does, except that, as a side effect, the counter is
+zeroed whenever a literal type is resolved for the first time. On a cold start
+the model's own lookup tables supplied those resets; once they were warm, the
+next long hover died.
+
+The fix is a little absurd: the compiled model carries a pool of otherwise
+unused literal types (`Fuel`), and the engine looks one up before every
+transformer block, purely to reset the counter.
+
+### 5. Subwords: more story per position
+
+A hover's cost is set by the number of positions, not characters. A
+128-character context scored 3% better and broke the editor session; 256 was
+worse on both counts. So instead of more positions, each one carries more
+text: a 256-piece vocabulary where ` little`, ` named` and ` friends` are one
+token each, about 2.2 characters per position. The tokenizer is a trie walk,
+in types like everything else.
+
+### 6. The second ghost: a cache fixed by deleting `readonly`
+
+With hovers allowed to take a minute, the model could grow to 8 layers and 128
+dimensions. Then hovers 1 to 3 in a session were fine, hover 4 returned
+`never` after a minute, and hover 5 returned `never` instantly.
+
+Every time the checker compares two structured types it caches the answer.
+That cache is never emptied, and once it holds 16 million entries every
+comparison fails. The entries came from one word. Loops over tuples were
+written `X extends readonly [infer H, ...infer R]`; every tuple in the engine
+is mutable, and a mutable tuple matched against a readonly pattern is a
+different type, compared element by element and cached. That is one entry per
+step of every loop over a vector, millions per hover. Without `readonly` the
+match is the same type, accepted by identity, with no cache entry. Five
+full-context hovers in one session now pass.
+
+### 7. What did not work
+
+Distilling from a 33M-parameter teacher gained nothing measurable. Training
+the integer model for twice as long made it worse (0.79 nats per character
+against 0.69). A 512-piece vocabulary was too much for a small model. The
+numbers for all of these are in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
+
+### Where it stands
+
+The character model that used to be the default wrote
+`Once upon a time, there was a proble whise. The little girl was s`. The
+current one writes the stories in [Results](#results). It is not GPT-2 yet:
+that would be roughly 50× the matrix work per position, a 50k-row LM head and
+a 1,024-token context, which means hours per token and more memory than the
+checker's caches can hold. Getting closer would take a recurrent attention
+variant, wider lookup tables and probably splitting the model across files.
 
 ## How it works
 
@@ -84,7 +229,7 @@ So the engine represents numbers as **unary strings** (`"111"` is 3, `"-11"`
 is −2). Addition is concatenation and comparison is a prefix match, both
 native and independent of length. It never multiplies.
 
-### An integer GPT-2 with no multiplications
+### A GPT-2-shaped model with no multiplications
 
 The model is trained, quantization-aware, to run as integers with only
 additions and lookups:
@@ -125,7 +270,6 @@ additions and lookups:
 - **Sampling** is Gumbel-max with a seeded noise table (temperature 0.6) added
   to the head accumulators before the argmax. A fourth `Generate` argument
   selects a reproducible offset in that table; `"greedy"` skips the noise.
-
 - **Tokens:** 256 of them, the 63 characters, 192 frequent words and word
   parts such as `" upon"`, `"ing"` and `" Lily"`, and an end-of-story token.
   Text is split greedily, longest piece first (`scripts/tokenizer.py`). The rule is
@@ -228,165 +372,16 @@ vp run parity    # model/parity.json: PyTorch vs reference, and the reference's 
 Plain `vp run train` still trains the earlier 4 × 64 character model.
 `VOCAB=256 uv run scripts/tokenizer.py` relearns the vocabulary.
 
-## Experiments
+More in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md): every model trained, the
+longer-context runs, the inference papers this borrows from and how the cost
+scales.
 
-All runs use the same integer architecture. Losses are integer validation
-losses in nats per character, so character and subword models compare
-directly. Hover times are with `TSRS_FAST=1`.
+## Credits
 
-Character models (1.5k float steps, then 12.5k integer steps with calibrated,
-frozen scales, trained on the TinyStories validation file; 64-character
-context; hover of the default prompt plus 24 characters):
-
-| Data        | Layers × dims | Params | Val loss        | Hover | Notes                                                                             |
-| ----------- | ------------- | ------ | --------------- | ----- | --------------------------------------------------------------------------------- |
-| Shakespeare | 4 × 32        | 56k    | 2.13            | 1.4 s | First default. `ROMEO:⏎Whe the crome the love `                                   |
-| TinyStories | 4 × 32        | 56k    | ~2.32 (stopped) | –     | Stalled; stopped to free the GPU                                                  |
-| TinyStories | 4 × 64        | 211k   | 1.11            | 3.6 s | Previous default. Greedy: `Once upon a time, there was a little girl named Lily.` |
-| TinyStories | 8 × 64        | 410k   | 1.04            | 7.3 s | `Tom and Lily went to the park. They were so happy to see the`                    |
-
-Subword models (256-token vocabulary, 64-token context, extra data from the
-TinyStories train split; validation is always the same held-out characters;
-full-context hovers):
-
-| Layers × dims | Params | Training                       | Val loss | Hover    | Notes                                |
-| ------------- | ------ | ------------------------------ | -------- | -------- | ------------------------------------ |
-| 8 × 64        | 435k   | 600-step probe, 200 MB         | 1.57     | –        | Had barely started learning          |
-| 4 × 128       | 865k   | 600-step probe, 200 MB         | 1.16     | 24–42 s  |                                      |
-| 8 × 128       | 1.66M  | 600-step probe, 200 MB         | 1.13     | ~45 s    | Picked for the long run              |
-| **8 × 128**   | 1.66M  | 3k float + 15k integer, 600 MB | **0.71** | **36 s** | **Default.** See [Results](#results) |
-
-What made the difference:
-
-- **The data, more than the size.** TinyStories' simple vocabulary is what the
-  TinyStories paper is about: tiny models write coherent English on it. At the
-  same 64-dimension width, Shakespeare-style text stays word salad.
-- **Subword tokens instead of more positions.** Doubling the character context
-  to 128 cost more than it gained: attention and the per-hover budgets grow
-  with positions. 64 subword tokens cover ~140 characters for the price of a
-  bigger LM head, and let the model spend its capacity on words instead of
-  spelling.
-- **More data for a wider model.** The 22 MB validation file was enough for
-  211k parameters; the 1.66M-parameter model trains on 600 MB of the train
-  split as well.
-- **A short float phase.** Switching to integers after 3k float steps, then
-  decaying the learning rate to zero over 15k integer steps, worked. Switching
-  at 20k left the integer phase stuck near its starting loss. Longer integer
-  phases did worse: the loss rises while the learning rate is still high, and
-  30k decaying steps ended at 0.79 nats/char instead of 0.69 (see
-  [the journey](docs/JOURNEY.md)).
-- **`TSRS_FAST=1`:** 15 s → 4.9 s for the same hover.
-- **Input encoding.** Offsetting the matrix inputs to be non-negative halves
-  the template spans, but every input string gets ~127 characters longer;
-  splitting inputs into positive and negative parts measured faster (15.0 s vs
-  18.4 s before fast mode), so the engine uses the split.
-- **KV cache rebuilt by splicing**, not mapping, so untouched layers stay
-  resolved instead of becoming chains of lazy references.
-
-Not used: the pretrained TinyStories checkpoints. Their float weights would
-need integer retraining anyway, and their 50,257-token BPE vocabulary would
-make the LM head alone ~50k rows per generated token (about 20× the whole
-per-token cost here) and require a BPE tokenizer in types.
-
-The 8-layer model used to return `any` beyond roughly 44 positions. That was
-the 5M budget (see [Making it hoverable](#making-it-hoverable)): at late
-positions a single position of that model costs more than 5M counted
-instantiations. With a budget reset before every block it now runs to the full
-64-character context, also on repeated hovers. A 16-layer, 32-dimension model
-(untrained, built to bisect the limit) does too.
-
-### Longer context on Colab
-
-The 4-layer, 64-dimension model was also trained with 128- and 256-character
-contexts on a Colab Tesla T4, using the same 14,000-step recipe and seed 1337.
-Both runs completed; their checkpoints and full training logs are saved here.
-
-| Context | Loss on shared targets (nats/char) | Checkpoint                                           |
-| ------- | ---------------------------------- | ---------------------------------------------------- |
-| 64      | 1.1064                             | Previous default (`git show 772a00c:model/qat.json`) |
-| 128     | 1.0732                             | [Experimental](model/context128.json)                |
-| 256     | 1.5824                             | [Experimental](model/context256.json)                |
-
-`scripts/evaluate-context.ts` scores the same 4,096 target characters for all
-three models: the last 64 predictions in each of 64 fixed validation windows.
-Each model receives its own context length. This avoids comparing different
-random validation batches. The 128-context checkpoint scores about 3% better;
-the 256-context checkpoint scores about 43% worse. These are single training
-runs on validation data, not a separate test set or evidence that context alone
-caused the difference. [Evaluation outputs](experiments/context-128.json) include
-sampled and greedy text, checkpoint hashes and a hash of the normalized validation
-text; [training logs](experiments/context-training.json) include the training-script
-hash. The runs took about 43 and 86 minutes, partly sharing the GPU.
-
-The compiled reference matches PyTorch's **float64** integer simulation at all
-8,192 checked positions for 128 context and all 16,384 for 256 context. Float32
-and float64 do not produce identical accumulators for these checkpoints
-(6,976 and 16,198 positions differ respectively). The full-window float64
-validation losses are 1.1534 and 1.6221; those averages include the early
-predictions with little context and are different from the shared-target table.
-
-Neither replaced the 64-character model, and the subword model has since
-replaced all three. With the 128 checkpoint, two full-context hovers in one
-server session matched the reference, but the third returned `never`; the same
-third prompt worked in a fresh server. That is the symptom of the relation
-cache limit found later (see [Making it hoverable](#making-it-hoverable)); it
-was not retested after that fix. These checkpoints
-are experimental: all three full-context hovers fail for the 256 checkpoint,
-starting with `any` even in a fresh server. A successful fresh hover is not
-sufficient evidence of editor reliability. The attempted budget-reset and materialization changes did
-not fix that regression and were not included in the engine.
-
-To reproduce in a scratch checkout (compilation regenerates tracked files):
-
-```sh
-QAT=model/context128.json vp run compile
-QAT=model/context128.json PARITY_WINDOWS=64 vp run parity
-QAT=model/context128.json node scripts/evaluate-context.ts
-vp run check:hover  # exposed the repeated-hover failure before the cache fix
-
-# Restore the default model and its parity vectors afterward.
-vp run compile
-vp run parity
-```
-
-Use `model/context256.json` for the 256-context run. The checked-in evaluation
-outputs are [64](experiments/context-64.json), [128](experiments/context-128.json)
-and [256](experiments/context-256.json).
-
-## The playbook, triaged
-
-How the 2025–26 inference playbook maps onto a type checker. Its "hardware" is
-a single-threaded, memoizing interpreter where lookups and string
-concatenation are cheap and everything else is not.
-
-| Technique (papers)                                                                           | Used?               | Why                                                                                                                                                                                                                                               |
-| -------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Low-precision compute (BitNet b1.58; ResServe for FP4)                                       | **Yes**             | The core idea: ternary weights turn every mat-vec into concatenation. FP4 formats and residue compensation (ResServe) are GPU-specific.                                                                                                           |
-| Table lookup instead of compute (T-MAC, bitnet.cpp; Engram's O(1) lookup)                    | **Yes**             | A property lookup in an object type is a native hash lookup, the cheapest operation available. All non-linear ops are tables or trees. Engram's conditional n-gram memory itself is not implemented.                                              |
-| Low-bit KV cache (SAW-INT4, TurboQuant)                                                      | **Yes**, simplified | q/k/v with 4-bit magnitudes and static scales. Their rotations would likely recover some quality.                                                                                                                                                 |
-| Reusing computation, storage for compute (KV cache; Mooncake)                                | **Yes**, in spirit  | Positions reuse cached K/V. The checker memoizes every instantiation, and the CLI example chains statement-sized states.                                                                                                                          |
-| Sparse attention (DeepSeek-V3.2 DSA, LongCat, AttentionIndex, Multi-layer Indexer)           | No                  | With 64 positions, dense attention over the cache is cheaper than any indexer. It would matter at longer contexts.                                                                                                                                |
-| Linear or recurrent attention (Kimi Linear, Qwen3-Next)                                      | No, best next step  | Attention is why hover time grows with context (the 48-character hover takes more than twice the 24-character one). A fixed-size recurrent state would make the cost per token constant, but it is a different architecture from GPT-2.           |
-| Speculative decoding (DSpark, EAGLE-3, DFlash)                                               | No                  | Speculation trades parallel compute for fewer sequential passes. The checker has no parallelism to spare, so verifying k drafts costs about as much as generating them. "Speculative Decoding: Performance or Illusion?" makes the general point. |
-| MoE and expert parallelism (Least-Loaded EP, wide EP)                                        | No                  | One small dense model on one thread.                                                                                                                                                                                                              |
-| Kernels and serving (FlashAttention-4, HiSparse, DualPath, async scheduling, disaggregation) | No                  | Hardware- and cluster-specific. The closest analogue is splitting work to fit a budget, as the CLI example does per statement.                                                                                                                    |
-| SIMD                                                                                         | In effect           | One template-literal instantiation adds about 20 values natively, much like one vector instruction. T-MAC's lookup tables are the SIMD table-lookup (TBL/PSHUF) idea.                                                                             |
-
-Every paper above was checked to exist and to say what is quoted here. Two
-claims in the playbook about DeepInfer (the +5.4% EP64 figure and
-time-budgeted chunked prefill) could not be confirmed against its README, so
-neither is relied on.
-
-## Scaling
-
-The engine cost about 1.2M type instantiations per position for the 4 × 64
-character model (300k at 32 dimensions), against about 25M for this project's
-first, digit-arithmetic version (which could not be hovered at all). Matrix
-work grows with layers × d², attention with context length, so the 8 × 128
-default does about eight times the matrix work of 4 × 64; a full story takes
-half a minute to a minute and ~8 GB. GPT-2 small (d = 768, 12 layers, 1024
-context) would be roughly 50× the default's matrix work per position, plus a
-50k-row LM head and far longer attention: hours per token, and more memory
-than the checker's caches can hold. Getting there would
-take a recurrent attention variant, wider tables (T-MAC-style grouping of
-several inputs per lookup), and probably splitting the model across files.
+- [GPT-2 in CSS](https://shubhampatil.dev/blog/gpt2-css) by Shubham Patil, the inspiration.
+- [Doom in TypeScript types](https://socket.dev/blog/typescript-types-running-doom) by Dimitri Mitropoulos, for raising the bar on what a type checker should be asked to do.
+- [TinyStories](https://arxiv.org/abs/2305.07759) (Eldan & Li, 2023) for the data.
+- [BitNet b1.58](https://arxiv.org/abs/2402.17764) and [BitNet](https://arxiv.org/abs/2310.11453) for ternary weights.
+- [T-MAC](https://arxiv.org/abs/2407.00088) and [bitnet.cpp](https://arxiv.org/abs/2502.11880) for table-lookup inference.
+- [I-BERT](https://arxiv.org/abs/2101.01321) and [Jacob et al. 2018](https://arxiv.org/abs/1712.05877) for integer-only inference.
+- [tsrs](https://github.com/oxc-project/tsrs), the checker everything runs in.

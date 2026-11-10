@@ -36,7 +36,7 @@ Type checking uses [tsrs](https://github.com/oxc-project/tsrs) (`tsrs --noEmit -
 
 ## Project Layout
 
-- `src/engine/index.ts` — the type-level integer GPT-2 (`Generate`, `Start`/`Steps`/`Output`). Values are signed unary strings (`src/num/ustr.ts`).
+- `src/engine/index.ts` — the type-level integer GPT-2-style model (`Generate`, `Start`/`Steps`/`Output`). Values are signed unary strings (`src/num/ustr.ts`).
 - `src/reference/int.ts` is the spec: the engine must match it digit for digit.
 - `scripts/train.py` (QAT, PyTorch via uv) → `model/qat.json`; `scripts/compile.ts` → `model/program.json` + `src/model/program.ts`.
 - Generated (do not hand-edit): `src/model/program.ts`, `model/program.json`, `tests/types/engine.gen.ts`, `examples/story.ts`. Regenerate with `vp run compile`.
