@@ -271,8 +271,9 @@ What made the difference:
   split as well.
 - **A short float phase.** Switching to integers after 3k float steps, then
   decaying the learning rate to zero over 15k integer steps, worked. Switching
-  at 20k left the integer phase stuck near its starting loss, and a 37k-step
-  integer phase at a high learning rate drifted upward (see
+  at 20k left the integer phase stuck near its starting loss. Longer integer
+  phases did worse: the loss rises while the learning rate is still high, and
+  30k decaying steps ended at 0.79 nats/char instead of 0.69 (see
   [the journey](docs/JOURNEY.md)).
 - **`TSRS_FAST=1`:** 15 s → 4.9 s for the same hover.
 - **Input encoding.** Offsetting the matrix inputs to be non-negative halves

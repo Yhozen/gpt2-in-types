@@ -236,6 +236,13 @@ from float to integer arithmetic freezes the activation scales:
   among 256 pieces (5.55). Stopped.
 - **Switch at step 3,000, then 15,000 integer steps decaying to zero.** The
   recipe that had worked at the small size, given more steps and data.
+- **The same, with 30,000 integer steps.** More steps should help, so this ran
+  next. It did not: the loss bottomed out at 1.73 nats per token around step
+  12,000, climbed to 1.85 by step 25,000, and only partly recovered as the
+  learning rate reached zero (0.79 nats per character at the end, against 0.69
+  for the 15,000-step run). The likely culprit, a guess not tested, is the
+  frozen scales: calibrated once at the switch, they fit the weights less and
+  less as those keep moving. In this setup the integer phase wants to be short.
 
 The third run is the default now. Its integer model scores 0.71 nats per
 character on the fixed validation windows (the reference's own number), against
