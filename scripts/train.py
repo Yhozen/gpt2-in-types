@@ -259,12 +259,21 @@ def int_layernorm(x, quant):
     sigma_f = torch.sqrt(ss / d + 1e-6)
     if not quant:
         return 32 * c / sigma_f
-    # sigma from SS truncated to 3 significant digits (the type-level sqrt table).
-    digits = sum((ss >= 10**k).float() for k in range(0, 9))
-    p = torch.clamp(10 ** (digits - 3), min=1)
-    ss_m = torch.floor(ss / p) * p
-    sigma = torch.clamp(rnd(torch.sqrt(ss_m / d)), min=1).detach()
-    sigma = ste(sigma_f, sigma)
+    # sigma from SS truncated to 3 significant digits (the type-level sqrt table), in exact
+    # integer arithmetic: float32 holds integers exactly only below 2^24, and SS reaches
+    # n_embd * 510^2 (33M at 128 dimensions).
+    ci = c.detach().round().to(torch.int32)
+    ssi = (ci * ci).sum(-1, keepdim=True).to(torch.int64)
+    p = torch.ones_like(ssi)
+    for k in range(3, 12):
+        p = torch.where(ssi >= 10**k, 10 ** (k - 2), p)
+    ss_m = torch.div(ssi, p, rounding_mode="floor") * p
+    # sigma = max(1, round(sqrt(ss_m / d))): the largest s with (2s - 1)^2 d <= 4 ss_m.
+    s = torch.floor(torch.sqrt(ss_m.float() / d) + 0.5).to(torch.int64)
+    up, down = 2 * s + 1, 2 * s - 1
+    s = torch.where(up * up * d <= 4 * ss_m, s + 1, s)
+    s = torch.where((s > 0) & (down * down * d > 4 * ss_m), s - 1, s)
+    sigma = ste(sigma_f, s.clamp(min=1).to(x.dtype))
     zq = torch.sign(c) * torch.floor((torch.floor(64 * c.abs() / sigma.detach()) + 1) / 2)
     return ste(32 * c / sigma, torch.clamp(zq, -Z_MAX, Z_MAX))
 
@@ -367,9 +376,8 @@ class GPT(nn.Module):
 
 
 def main():
-    # The integer forward pass runs in float32 (MPS), which is exact only below 2^24.
-    # The largest intermediate is LayerNorm's sum of squares, n_embd * (2 * R_MAX)^2.
-    assert CFG["n_embd"] * (2 * R_MAX) ** 2 < 2**24, "n_embd > 64 needs a float64 sum of squares in int_layernorm"
+    # The integer forward pass runs in float32 (MPS), exact below 2^24. LayerNorm's sum of
+    # squares is computed in int64 (int_layernorm); every other intermediate stays far below.
     chars, eos, train_ids, val_ids, val_chars = load_data()
     train, val = torch.tensor(train_ids, dtype=torch.long), torch.tensor(val_ids, dtype=torch.long)
     per_char = len(val) / val_chars  # tokens per character: nats/token -> nats/char
