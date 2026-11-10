@@ -18,13 +18,7 @@ type S10 = Advance<S9, 2>;
 type S11 = Advance<S10, 2>;
 type S12 = Advance<S11, 2>;
 type S13 = Advance<S12, 2>;
-type S14 = Advance<S13, 2>;
-type S15 = Advance<S14, 2>;
-type S16 = Advance<S15, 2>;
-type S17 = Advance<S16, 2>;
-type S18 = Advance<S17, 2>;
-type S19 = Advance<S18, 2>;
-type S20 = Advance<S19, 1>;
+type S14 = Advance<S13, 1>;
 
-export type Text = Output<S20>;
-export type Check = Expect<Equal<Text, "Once upon a time, there was a proble whi">>;
+export type Text = Output<S14>;
+export type Check = Expect<Equal<Text, "Once upon a time, there was a little girl named Lily. She had a big, red ball that she loved">>;
