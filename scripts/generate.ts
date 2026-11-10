@@ -1,6 +1,7 @@
 // Run GPT-2 in the type checker and print the text.
 //
 //   node scripts/generate.ts "Once upon a time" 24            # seeded sampling (T = 0.6)
+//   node scripts/generate.ts "Once upon a time" 24 --seed 1   # another reproducible sample
 //   node scripts/generate.ts "Once upon a time" 24 --greedy   # argmax
 //   node scripts/generate.ts "Once upon a time" 24 --out examples/story.ts [--chunk 2]
 //
@@ -29,16 +30,17 @@ const option = (name: string) => {
   return args[i + 1];
 };
 const out = option("--out");
+const seed = args.includes("--seed") ? Number(option("--seed")) : 0;
 // Positions per statement: each costs 1-2.5M instantiations at the default size.
 const chunk = Number(option("--chunk") ?? 2);
 const positional = args.filter((a, i) => !a.startsWith("--") && !valued.has(i));
 const prompt = positional[0] ?? "Once upon a time";
 const n = Number(positional[1] ?? 24);
 const mode = greedy ? "greedy" : "sample";
-const modeArg = greedy ? `, "greedy"` : "";
+const modeArg = seed !== 0 ? `, "${mode}", ${seed}` : greedy ? `, "greedy"` : "";
 
 const program = JSON.parse(readFileSync(resolve(ROOT, "model/program.json"), "utf8")) as Program;
-const expected = decode(program, generate(program, encode(program, prompt), n, mode));
+const expected = decode(program, generate(program, encode(program, prompt), n, mode, seed));
 const quote = (s: string) => JSON.stringify(s);
 
 if (out) {
@@ -79,7 +81,9 @@ if (out) {
     file,
     `import type { Generate } from "../src/engine/index.ts";\n\nexport type Text = Generate<${quote(prompt)}, ${n}${modeArg}>;\n`,
   );
-  console.log(`prompt ${quote(prompt)}, ${n} tokens, ${mode}: hovering Text via tsrs --lsp ...`);
+  console.log(
+    `prompt ${quote(prompt)}, ${n} tokens, ${mode}, seed ${seed}: hovering Text via tsrs --lsp ...`,
+  );
   const result = await hover(file, "Text");
   const match = /type Text = ("(?:[^"\\]|\\.)*")/.exec(result.text);
   const text = match ? (JSON.parse(match[1]!) as string) : undefined;

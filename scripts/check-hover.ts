@@ -13,9 +13,11 @@ import { hoverAll } from "./hover.ts";
 const ROOT = resolve(import.meta.dirname, "..");
 const program = JSON.parse(readFileSync(resolve(ROOT, "model/program.json"), "utf8")) as Program;
 const cases = [
-  ["Once upon a time", "sample"],
-  ["Tom and Lily went", "greedy"],
-  ["The little dog", "sample"],
+  ["Once upon a time", "sample", 0],
+  ["Tom and Lily went", "greedy", 0],
+  ["The little dog", "sample", 0],
+  ["Once upon a time", "sample", 1],
+  ["Once upon a time", "sample", program.config.block_size - 1],
 ] as const;
 const n = program.config.block_size; // more than fits: every case runs to the full context
 
@@ -25,8 +27,8 @@ writeFileSync(
   file,
   `import type { Generate } from "../src/engine/index.ts";\n\n${cases
     .map(
-      ([prompt, mode], i) =>
-        `export type T${i} = Generate<${JSON.stringify(prompt)}, ${n}, "${mode}">;`,
+      ([prompt, mode, seed], i) =>
+        `export type T${i} = Generate<${JSON.stringify(prompt)}, ${n}, "${mode}", ${seed}>;`,
     )
     .join("\n")}\n`,
 );
@@ -35,8 +37,8 @@ const results = await hoverAll(
   cases.map((_, i) => `T${i}`),
 );
 let failed = false;
-cases.forEach(([prompt, mode], i) => {
-  const expected = decode(program, generate(program, encode(program, prompt), n, mode));
+cases.forEach(([prompt, mode, seed], i) => {
+  const expected = decode(program, generate(program, encode(program, prompt), n, mode, seed));
   const { text, seconds } = results[i]!;
   const ok = text === `type T${i} = ${JSON.stringify(expected)}`;
   failed ||= !ok;

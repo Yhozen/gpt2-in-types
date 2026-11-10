@@ -53,6 +53,29 @@ for (const [prompt, n] of [
   }
 }
 
+// Seeded generations, including wraparound and continuation across checkpoints.
+for (const seed of [1, p.config.block_size - 1]) {
+  const expected = JSON.stringify(
+    ref.decode(p, ref.generate(p, ref.encode(p, "Once"), 3, "sample", seed)),
+  );
+  check(`Seed_${seed}`, `E.Generate<"Once", 3, "sample", ${seed}>`, expected);
+  check(
+    `Seed_${seed}_steps`,
+    `E.Output<E.Steps<E.Steps<E.Start<"Once">, 1, "sample", ${seed}>, 2, "sample", ${seed}>>`,
+    expected,
+  );
+  check(
+    `Seed_${seed}_advance`,
+    `E.Output<E.Advance<E.Advance<E.Start<"Once">, 3, "sample", ${seed}>, 3, "sample", ${seed}>>`,
+    expected,
+  );
+}
+check(
+  "Greedy_ignores_seed",
+  `E.Generate<"Once", 3, "greedy", ${p.config.block_size - 1}>`,
+  JSON.stringify(ref.decode(p, ref.generate(p, ref.encode(p, "Once"), 3, "greedy"))),
+);
+
 // Prompts the model cannot encode become readable errors, not `never` or `any`.
 check(
   "Error_unknown_character",
@@ -69,6 +92,9 @@ import type { ToS } from "../../src/num/ustr.ts";
 import type { Equal, Expect } from "../../src/util.ts";
 
 ${checks.join("\n")}
+
+// @ts-expect-error Seeds must be literal integers within the model's noise table.
+export type InvalidSeed = E.Generate<"Once", 3, "sample", ${p.config.block_size}>;
 `,
 );
 console.log(`wrote ${checks.length} checks`);

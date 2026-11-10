@@ -265,6 +265,14 @@ export type RQVec<N extends string, L extends number, A> = ${layers
 `);
 out.push(`/** Sampling noise per position (Gumbel, T = ${TEMPERATURE}, fixed seed), head-accumulator units. */
 export type Noise = [\n${noise.map((r) => `  [${r.map((v) => (v === 0 ? '""' : `ToS<${v}>`)).join(", ")}],`).join("\n")}\n];\n`);
+const positions = Array.from({ length: block_size }, (_, i) => i);
+out.push(`/** Valid offsets into the stored noise sequence; zero preserves the original sequence. */
+export type SamplingSeed = ${positions.join(" | ")};
+/** NoiseIndex[seed][position] = (position + seed) mod context length. */
+export type NoiseIndex = [
+${positions.map((offset) => `  [${positions.map((pos) => (pos + offset) % block_size).join(", ")}],`).join("\n")}
+];
+`);
 out.push(matrix("Head", program.head));
 {
   // See Refuel in src/engine. A pool of literal type nodes keyed by (position,

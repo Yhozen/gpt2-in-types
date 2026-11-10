@@ -170,20 +170,26 @@ export function forward(
  * Generate N tokens after the prompt (stops at the context size). "sample" adds
  * the seeded Gumbel noise of the generating position before the argmax
  * (Gumbel-max sampling at temperature 0.6); "greedy" takes the plain argmax.
+ * Seed rotates the stored noise sequence; valid integers are 0..block_size-1.
  */
 export function generate(
   p: Program,
   prompt: number[],
   n: number,
   mode: "sample" | "greedy" = "sample",
+  seed = 0,
 ): number[] {
+  if (!Number.isInteger(seed) || seed < 0 || seed >= p.config.block_size) {
+    throw new RangeError(`seed must be an integer from 0 to ${p.config.block_size - 1}`);
+  }
   const tokens = [...prompt];
   const cache = p.layers.map(() => ({ k: [] as number[][][], v: [] as number[][][] }));
   for (let pos = 0; pos < tokens.length && pos < p.config.block_size; pos++) {
     const x = forward(p, tokens[pos]!, pos, cache);
     if (pos === tokens.length - 1 && tokens.length - prompt.length < n) {
       const acc = matvec(p.head, layerNorm(x, p));
-      tokens.push(argmax(mode === "sample" ? acc.map((a, v) => a + p.noise[pos]![v]!) : acc));
+      const noise = p.noise[(pos + seed) % p.config.block_size]!;
+      tokens.push(argmax(mode === "sample" ? acc.map((a, v) => a + noise[v]!) : acc));
     }
   }
   return tokens;

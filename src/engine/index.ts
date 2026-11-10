@@ -17,6 +17,9 @@ import type * as M from "../model/program.ts";
 type Strs = readonly string[];
 type Nums = readonly number[];
 
+/** Literal noise offsets supported by this model (0..context length - 1). */
+export type SamplingSeed = M.SamplingSeed;
+
 // ---------------------------------------------------------------- helpers
 
 export type PosPart<S> = S extends `-${string}` ? "" : S;
@@ -359,9 +362,13 @@ export type Argmax<
     : Argmax<R, [...I, 0], Best, B>
   : Best;
 /** @internal */
-export type NextToken<X, Pos extends number, Mode> =
+export type NextToken<X, Pos extends number, Mode, Seed extends SamplingSeed = 0> =
   Split<LayerNorm<X>> extends [infer XP extends Strs, infer XN extends Strs]
-    ? Argmax<Mode extends "greedy" ? M.Head<XP, XN> : AddNoise<M.Head<XP, XN>, M.Noise[Pos]>>
+    ? Argmax<
+        Mode extends "greedy"
+          ? M.Head<XP, XN>
+          : AddNoise<M.Head<XP, XN>, M.Noise[M.NoiseIndex[Seed][Pos]]>
+      >
     : never;
 type AddNoise<A, N> = { [K in keyof A]: AddS<A[K] & string, N[K & keyof N] & string> };
 
@@ -402,13 +409,18 @@ export type State = readonly [number[], unknown[], readonly unknown[]];
 export type Start<Prompt extends string> =
   Encode<Prompt> extends infer T extends number[] ? [T, [], EmptyKV] : Encode<Prompt>;
 
-/** Run positions until N more tokens are generated. */
-export type Steps<S, N extends number, Mode = "sample"> = S extends readonly [
+/** Run until N more tokens are generated. Pass the same Seed on each continuation. */
+export type Steps<
+  S,
+  N extends number,
+  Mode = "sample",
+  Seed extends SamplingSeed = 0,
+> = S extends readonly [
   infer Tokens extends number[],
   infer Pos extends unknown[],
   infer KV extends readonly unknown[],
 ]
-  ? Run<Tokens, Pos, Tuple<N>, KV, Mode>
+  ? Run<Tokens, Pos, Tuple<N>, KV, Mode, Seed>
   : S extends string
     ? S
     : never;
@@ -427,25 +439,34 @@ export type Run<
   Left extends unknown[],
   KV extends readonly unknown[],
   Mode,
+  Seed extends SamplingSeed = 0,
 > = Pos["length"] extends M.Config["blockSize"]
   ? [Tokens, Pos, KV]
   : [...Pos, 0]["length"] extends Tokens["length"]
     ? Left extends [unknown, ...infer Left2 extends unknown[]]
       ? Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
-        ? Run<[...Tokens, NextToken<X, Pos["length"], Mode>], [...Pos, 0], Left2, KV2, Mode>
+        ? Run<
+            [...Tokens, NextToken<X, Pos["length"], Mode, Seed>],
+            [...Pos, 0],
+            Left2,
+            KV2,
+            Mode,
+            Seed
+          >
         : never
       : [Tokens, Pos, KV]
     : // A prompt position: only the KV cache matters.
       Layers<Tokens, Pos, KV> extends [unknown, infer KV2 extends readonly unknown[]]
-      ? Run<Tokens, [...Pos, 0], Left, KV2, Mode>
+      ? Run<Tokens, [...Pos, 0], Left, KV2, Mode, Seed>
       : never;
 
-/** The prompt plus N generated characters (seeded sampling; "greedy" for argmax). */
+/** Prompt plus N generated characters. Seed rotates noise rows; zero preserves existing output. */
 export type Generate<
   Prompt extends string,
   N extends number,
   Mode extends "sample" | "greedy" = "sample",
-> = Output<Steps<Start<Prompt>, N, Mode>>;
+  Seed extends SamplingSeed = 0,
+> = Output<Steps<Start<Prompt>, N, Mode, Seed>>;
 
 /** Final residual stream of every position of a token sequence (for tests). */
 export type Trace<
@@ -463,13 +484,19 @@ export type Trace<
  * Process exactly K positions (prompt or generation), appending a token
  * whenever the last one is reached. Finer-grained than Steps, so the CLI can
  * also split the prompt's prefill across statements.
+ * Pass the same Seed on each continuation to preserve one sampling sequence.
  */
-export type Advance<S, K extends number, Mode = "sample"> = S extends readonly [
+export type Advance<
+  S,
+  K extends number,
+  Mode = "sample",
+  Seed extends SamplingSeed = 0,
+> = S extends readonly [
   infer Tokens extends number[],
   infer Pos extends unknown[],
   infer KV extends readonly unknown[],
 ]
-  ? RunK<Tokens, Pos, Tuple<K>, KV, Mode>
+  ? RunK<Tokens, Pos, Tuple<K>, KV, Mode, Seed>
   : S extends string
     ? S
     : never;
@@ -479,12 +506,20 @@ type RunK<
   K extends unknown[],
   KV extends readonly unknown[],
   Mode,
+  Seed extends SamplingSeed,
 > = K extends [unknown, ...infer K2 extends unknown[]]
   ? Pos["length"] extends M.Config["blockSize"]
     ? [Tokens, Pos, KV]
     : Layers<Tokens, Pos, KV> extends [infer X, infer KV2 extends readonly unknown[]]
       ? [...Pos, 0]["length"] extends Tokens["length"]
-        ? RunK<[...Tokens, NextToken<X, Pos["length"], Mode>], [...Pos, 0], K2, KV2, Mode>
-        : RunK<Tokens, [...Pos, 0], K2, KV2, Mode>
+        ? RunK<
+            [...Tokens, NextToken<X, Pos["length"], Mode, Seed>],
+            [...Pos, 0],
+            K2,
+            KV2,
+            Mode,
+            Seed
+          >
+        : RunK<Tokens, [...Pos, 0], K2, KV2, Mode, Seed>
       : never
   : [Tokens, Pos, KV];

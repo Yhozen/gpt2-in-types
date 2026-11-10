@@ -28,5 +28,15 @@ export type Generate_Once_sample = Expect<Equal<E.Generate<"Once", 3, "sample">,
 export type Generate_Once_greedy = Expect<Equal<E.Generate<"Once", 3, "greedy">, "Once up">>;
 export type Generate_Tom_sample = Expect<Equal<E.Generate<"Tom ", 3, "sample">, "Tom ask">>;
 export type Generate_Tom_greedy = Expect<Equal<E.Generate<"Tom ", 3, "greedy">, "Tom sai">>;
+export type Seed_1 = Expect<Equal<E.Generate<"Once", 3, "sample", 1>, "Once th">>;
+export type Seed_1_steps = Expect<Equal<E.Output<E.Steps<E.Steps<E.Start<"Once">, 1, "sample", 1>, 2, "sample", 1>>, "Once th">>;
+export type Seed_1_advance = Expect<Equal<E.Output<E.Advance<E.Advance<E.Start<"Once">, 3, "sample", 1>, 3, "sample", 1>>, "Once th">>;
+export type Seed_63 = Expect<Equal<E.Generate<"Once", 3, "sample", 63>, "Once up">>;
+export type Seed_63_steps = Expect<Equal<E.Output<E.Steps<E.Steps<E.Start<"Once">, 1, "sample", 63>, 2, "sample", 63>>, "Once up">>;
+export type Seed_63_advance = Expect<Equal<E.Output<E.Advance<E.Advance<E.Start<"Once">, 3, "sample", 63>, 3, "sample", 63>>, "Once up">>;
+export type Greedy_ignores_seed = Expect<Equal<E.Generate<"Once", 3, "greedy", 63>, "Once up">>;
 export type Error_unknown_character = Expect<Equal<E.Generate<"3 pigs", 2>, "Error: the character '3' is not in the model's vocabulary">>;
 export type Error_empty_prompt = Expect<Equal<E.Generate<"", 2>, "Error: the prompt is empty">>;
+
+// @ts-expect-error Seeds must be literal integers within the model's noise table.
+export type InvalidSeed = E.Generate<"Once", 3, "sample", 64>;

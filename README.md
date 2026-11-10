@@ -113,7 +113,8 @@ additions and lookups:
     [TurboQuant](https://arxiv.org/abs/2504.19874); here they use plain static
     scales with no rotation.
 - **Sampling** is Gumbel-max with a seeded noise table (temperature 0.6) added
-  to the head accumulators before the argmax. `"greedy"` skips it.
+  to the head accumulators before the argmax. A fourth `Generate` argument
+  selects a reproducible offset in that table; `"greedy"` skips the noise.
 
 Training (`scripts/train.py`) runs the exact integer forward pass with
 straight-through gradients: 1.5k float steps, then the scales are calibrated
@@ -140,7 +141,8 @@ A hover evaluates the requested type on demand, so laziness matters:
   why deeper models failed part-way through the context). So the compiled
   program includes `Fuel`, a pool of 254k literal nodes keyed by position and
   two tokens, and the engine looks one up before every block (`Refuel`).
-  `vp run check:hover` hovers three full-context generations in one session
+  `vp run check:hover` hovers five full-context generations in one session,
+  including different seeds for the same prompt,
   to guard this. It relies on an implementation detail of tsrs 0.23, which is
   why the version is pinned.
 - The CLI budget is per statement and the pool does not lift it reliably, so
@@ -158,15 +160,29 @@ Requires Node.js 26 and pnpm (installed on demand via `devEngines`).
 vp install
 node scripts/generate.ts "Tom and Lily" 24      # hover via tsrs --lsp, compare to the reference
 node scripts/generate.ts "Tom and Lily" 24 --greedy
+node scripts/generate.ts "Tom and Lily" 24 --seed 1
 node scripts/hover.ts examples/hover.ts Text    # hover any type, like an editor
 vp run examples                                 # CLI check of examples/story.ts
 vp run check                                    # format, lint, type check (incl. engine tests)
 vp test                                         # reference, compiled tables, parity vectors
-vp run check:hover                              # three full-context hovers in one editor session
+vp run check:hover                              # five full-context hovers in one editor session
 ```
 
 In VS Code or Cursor, open `examples/hover.ts` and hover `Text`. The committed
 `.vscode/settings.json` points the TypeScript 7 extension at tsrs.
+
+For another reproducible sample, change the fourth argument:
+
+```ts
+type Story = Generate<"Once upon a time", 24, "sample", 1>;
+```
+
+Seed 0 preserves the original output. The default model supports literal integer
+seeds 0–63 (in general, 0 to context length minus one), exported as `SamplingSeed`.
+These are cyclic offsets into the stored noise sequence, not new PRNG runs;
+different seeds can still produce the same text. Greedy output is independent of
+the seed. When continuing with `Steps` or `Advance`, pass the same fourth seed
+argument to each call. `--seed` also works with the CLI's `--out` mode.
 
 To retrain (needs [uv](https://docs.astral.sh/uv/)):
 

@@ -107,6 +107,26 @@ describe("generation", () => {
     expect(decode(p, generate(p, prompt, 24, "greedy"))).not.toBe(a);
   });
 
+  test("seed offsets are reproducible and wrap the noise sequence", () => {
+    const prompt = encode(p, "Once upon a time");
+    const samples = new Set<string>();
+    for (const seed of [0, 1, p.config.block_size - 1]) {
+      const tokens = generate(p, prompt, 24, "sample", seed);
+      expect(generate(p, prompt, 24, "sample", seed)).toEqual(tokens);
+      const rotated = { ...p, noise: [...p.noise.slice(seed), ...p.noise.slice(0, seed)] };
+      expect(generate(rotated, prompt, 24)).toEqual(tokens);
+      samples.add(decode(p, tokens));
+      expect(generate(p, prompt, 24, "greedy", seed)).toEqual(generate(p, prompt, 24, "greedy"));
+    }
+    expect(samples.size).toBeGreaterThan(1);
+  });
+
+  test("rejects seeds outside the model's finite noise offsets", () => {
+    for (const seed of [-1, 0.5, p.config.block_size, NaN, Infinity]) {
+      expect(() => generate(p, encode(p, "Once"), 3, "sample", seed)).toThrow(RangeError);
+    }
+  });
+
   test("stops at the context size", () => {
     expect(generate(p, encode(p, "Once"), 500).length).toBe(p.config.block_size + 1);
   });

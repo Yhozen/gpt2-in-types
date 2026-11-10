@@ -9,3 +9,6 @@ export type Text = Generate<"Once upon a time", 24>;
 
 /** Argmax decoding instead of seeded sampling. */
 export type Greedy = Generate<"Once upon a time", 24, "greedy">;
+
+/** Change the fourth argument for another reproducible sample (0..63 here). */
+export type AnotherStory = Generate<"Once upon a time", 24, "sample", 1>;

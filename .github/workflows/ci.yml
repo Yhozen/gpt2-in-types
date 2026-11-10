@@ -28,5 +28,5 @@ jobs:
         run: vp test
       - name: Run the model in the type checker (CLI)
         run: vp run examples
-      - name: Run the model through the language server (three hovers, one session)
+      - name: Run the model through the language server (five hovers, one session)
         run: vp run check:hover
