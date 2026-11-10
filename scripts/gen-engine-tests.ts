@@ -92,6 +92,11 @@ for (const [name, text] of [
     `[${ref.encode(p, text).join(", ")}]`,
   );
 }
+check(
+  "Tokenize_story",
+  `E.Tokenize<"Once upon a time">`,
+  JSON.stringify(ref.encode(p, "Once upon a time").map((t) => p.vocab[t])),
+);
 
 // Prompts the model cannot encode become readable errors, not `never` or `any`.
 check(

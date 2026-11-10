@@ -408,6 +408,13 @@ type Longest<S extends string, Node, Best = null> = S extends `${infer C}${infer
     : Best
   : Best;
 type Quote<C extends string> = C extends "\n" ? "\\n" : `'${C}'`;
+/**
+ * The prompt as the model sees it, one vocabulary piece per token:
+ * Tokenize<"Once upon a time"> = ["Once", " upon", " a", " time"].
+ */
+export type Tokenize<S extends string> =
+  Encode<S> extends infer T extends number[] ? Pieces<T> : Encode<S>;
+type Pieces<T> = { [I in keyof T]: M.Vocab[T[I] & keyof M.Vocab] };
 export type Decode<T, Acc extends string = ""> = T extends [infer I, ...infer R]
   ? Decode<R, `${Acc}${M.Vocab[I & keyof M.Vocab] & string}`>
   : Acc;
