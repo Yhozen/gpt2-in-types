@@ -54,6 +54,10 @@ for (const [prompt, n] of [
 }
 
 // Seeded generations, including wraparound and continuation across checkpoints.
+// Advance counts positions, not tokens: the prompt's positions plus two more
+// produce the three new tokens, split across two statements.
+const positions = ref.encode(p, "Once").length + 2;
+const [k1, k2] = [Math.ceil(positions / 2), Math.floor(positions / 2)];
 for (const seed of [1, p.config.block_size - 1]) {
   const expected = JSON.stringify(
     ref.decode(p, ref.generate(p, ref.encode(p, "Once"), 3, "sample", seed)),
@@ -66,7 +70,7 @@ for (const seed of [1, p.config.block_size - 1]) {
   );
   check(
     `Seed_${seed}_advance`,
-    `E.Output<E.Advance<E.Advance<E.Start<"Once">, 3, "sample", ${seed}>, 3, "sample", ${seed}>>`,
+    `E.Output<E.Advance<E.Advance<E.Start<"Once">, ${k1}, "sample", ${seed}>, ${k2}, "sample", ${seed}>>`,
     expected,
   );
 }

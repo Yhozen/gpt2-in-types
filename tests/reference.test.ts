@@ -95,8 +95,9 @@ describe("integer ops", () => {
 
 describe("generation", () => {
   test("residual stream stays in range", () => {
-    const out = generate(p, encode(p, "Once"), 30);
-    expect(out.length).toBe(34);
+    const prompt = encode(p, "Once");
+    const out = generate(p, prompt, 30);
+    expect(out.length).toBe(prompt.length + 30);
     expect(R_MAX).toBe(255);
   });
 
