@@ -1,0 +1,48 @@
+{
+  "checkpointSha256": "4765d0cd930fe4fc2f8fedec88b5b47d1579cbaeee5ca3dd852ffd61dee8bc15",
+  "validationSha256": "f8334a9ccb36b4e170dffb6fd52384d97c1d9922cc8c38d5bb4fe692a46e53d6",
+  "config": {
+    "n_layer": 4,
+    "n_head": 8,
+    "n_embd": 64,
+    "block_size": 128,
+    "vocab_size": 63
+  },
+  "context": 128,
+  "windows": 64,
+  "targets": 4096,
+  "loss": 1.073170789649603,
+  "seconds": 13.960645000000001,
+  "samples": [
+    {
+      "prompt": "Once upon a time",
+      "mode": "greedy",
+      "text": "Once upon a time, there was a big starty was a big box. The bird was sad and sad. The bird was so happy and said, \"I will so have"
+    },
+    {
+      "prompt": "Once upon a time",
+      "mode": "sample",
+      "text": "Once upon a time, there was a proble with the ball. The bird was a save.\nOne day, the bird was a big dog named Sam. They should t"
+    },
+    {
+      "prompt": "Tom and Lily went",
+      "mode": "greedy",
+      "text": "Tom and Lily went to the story and said, \"That's a big box. I want to the story and some to see the ball.\" They said, \"Thank you "
+    },
+    {
+      "prompt": "Tom and Lily went",
+      "mode": "sample",
+      "text": "Tom and Lily went to help the park. They had a big sture to bed.\n\n\nOnce upon a time, there was a big dog named Spot. She saw a bi"
+    },
+    {
+      "prompt": "The little dog",
+      "mode": "greedy",
+      "text": "The little dog not started to play with his friends. They were very happy and said, \"Thank you, I will be you have to play with y"
+    },
+    {
+      "prompt": "The little dog",
+      "mode": "sample",
+      "text": "The little dog was sad.\nThe tipple dog and had a big book from the sky. The little girl could not to help anything together. The "
+    }
+  ]
+}

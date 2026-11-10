@@ -1,0 +1,48 @@
+{
+  "checkpointSha256": "fff10493c9dca4f3c3cc22a4b69b6da1f6ba646e99fa64af23526c35957b5380",
+  "validationSha256": "f8334a9ccb36b4e170dffb6fd52384d97c1d9922cc8c38d5bb4fe692a46e53d6",
+  "config": {
+    "n_layer": 4,
+    "n_head": 8,
+    "n_embd": 64,
+    "block_size": 64,
+    "vocab_size": 63
+  },
+  "context": 64,
+  "windows": 64,
+  "targets": 4096,
+  "loss": 1.1064379681725574,
+  "seconds": 6.276514708,
+  "samples": [
+    {
+      "prompt": "Once upon a time",
+      "mode": "greedy",
+      "text": "Once upon a time, there was a little girl named Lily. Tim was sca"
+    },
+    {
+      "prompt": "Once upon a time",
+      "mode": "sample",
+      "text": "Once upon a time, there was a proble whise. The little girl was s"
+    },
+    {
+      "prompt": "Tom and Lily went",
+      "mode": "greedy",
+      "text": "Tom and Lily went to the story and said, \"I want to see the story"
+    },
+    {
+      "prompt": "Tom and Lily went",
+      "mode": "sample",
+      "text": "Tom and Lily went to the park. He was very happy and so happy and"
+    },
+    {
+      "prompt": "The little dog",
+      "mode": "greedy",
+      "text": "The little dog named Tim. Tim was sad so happy to help his friend"
+    },
+    {
+      "prompt": "The little dog",
+      "mode": "sample",
+      "text": "The little dog was sad.\nThe tree was a little boy. The people was"
+    }
+  ]
+}

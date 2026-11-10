@@ -1,0 +1,48 @@
+{
+  "checkpointSha256": "0520d840e608b281f8937f498dd8ac19e92bc0b73cc45932ef0586d2fdede6cf",
+  "validationSha256": "f8334a9ccb36b4e170dffb6fd52384d97c1d9922cc8c38d5bb4fe692a46e53d6",
+  "config": {
+    "n_layer": 4,
+    "n_head": 8,
+    "n_embd": 64,
+    "block_size": 256,
+    "vocab_size": 63
+  },
+  "context": 256,
+  "windows": 64,
+  "targets": 4096,
+  "loss": 1.5824068246807554,
+  "seconds": 27.369723791000002,
+  "samples": [
+    {
+      "prompt": "Once upon a time",
+      "mode": "greedy",
+      "text": "Once upon a time, there was a big big and Tim was a sad big to the sard a a big the streard. The bird was a big to bird and said, but the said, \"I will you a and you the be for the bir you the big bear and the big and the balll the bird and the bouse and bi"
+    },
+    {
+      "prompt": "Once upon a time",
+      "mode": "sample",
+      "text": "Once upon a time, the saw a big frord and Tim said, \"I ou plare onou neare with nothe cat it.\"\nThe big thammy to the pon. They said, \"You stomy felt to metiven. It I seee yourp and and play with soune. He momean to treak.\"\n\n\n\nOnce upon a time, the did a a w"
+    },
+    {
+      "prompt": "Tom and Lily went",
+      "mode": "greedy",
+      "text": "Tom and Lily went to the beard and to the sart to the bear and the stouse and the stouned to the balll and said, \"I will a it big and to the bird to be ard the bee car to beare the bird the bird and big the bird thee back to the balll book and said the said"
+    },
+    {
+      "prompt": "Tom and Lily went",
+      "mode": "sample",
+      "text": "Tom and Lily went to and the wer boous. They looked too help for and said, \"I mun'mm t'm onot the tou to they. You wourd. very buto liked to the elid bing in to the sad iny be and it went to he sand not. It mow as her loget away.\nTim and had to maked pliche"
+    },
+    {
+      "prompt": "The little dog",
+      "mode": "greedy",
+      "text": "The little dog the birl the bittle boy to the beard to the bealll and the sare and the sarke to the bird and the bealll bird and said \"I will the stour tong the bear to the park the binds the big to bether band said,\" \"I man said, \"I want to to be bett the "
+    },
+    {
+      "prompt": "The little dog",
+      "mode": "sample",
+      "text": "The little dog flound to the wer bup. The bird all stoo big bear. The lirng was nothe back hare and the ra dot on he pon. They brablll and the big.\nBut was s to balke. He all played anex, \"Hell you cam fully? I an her you?\" Thar have ban had to make the san"
+    }
+  ]
+}

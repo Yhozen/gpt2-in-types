@@ -1,0 +1,48 @@
+{
+  "date": "2026-11-09",
+  "checker": "tsrs 0.23.0-ts7.1.0-beta",
+  "fast_mode": true,
+  "engine_commit": "43ea16f",
+  "training_device": "Tesla T4",
+  "runs": {
+    "128": {
+      "training_final_loss": 1.1135,
+      "training_seconds": 2568,
+      "parity": {
+        "windows": 64,
+        "positions": 8192,
+        "reference_float64_mismatches": 0,
+        "float32_float64_mismatches": 6976,
+        "loss64": 1.1534,
+        "loss32": 1.1536
+      },
+      "repeated_hover_log": "ok   hover 1 (36.1s): \"Once upon a time, there was a proble with the ball. The bird was a save.\\nOne day, the bird was a big dog named Sam. They should t\"\nok   hover 2 (34.1s): \"Tom and Lily went to the story and said, \\\"That's a big box. I want to the story and some to see the ball.\\\" They said, \\\"Thank you \"\nFAIL hover 3 (32.4s): type T2 = never\n",
+      "fresh_third_prompt": {
+        "matches_reference": true,
+        "seconds": 34.43,
+        "log": "prompt \"The little dog\", 128 tokens, sample: hovering Text via tsrs --lsp ...\n\n--- hover (34.43s) ---\nThe little dog was sad.\nThe tipple dog and had a big book from the sky. The little girl could not to help anything together. The \n\n--- matches the integer reference: yes ---\n"
+      }
+    },
+    "256": {
+      "training_final_loss": 1.5608,
+      "training_seconds": 5171,
+      "parity": {
+        "windows": 64,
+        "positions": 16384,
+        "reference_float64_mismatches": 0,
+        "float32_float64_mismatches": 16198,
+        "loss64": 1.6221,
+        "loss32": 1.5902
+      },
+      "repeated_hover_log": "FAIL hover 1 (47.3s): type T0 = any\nFAIL hover 2 (74.9s): type T1 = never\nFAIL hover 3 (0.0s): type T2 = \"Error: the character 'h' is not in the model's vocabulary\"\n"
+    }
+  },
+  "decision": "Retain the 64-context default. Longer-context models remain experimental because repeated full-context hovers are unreliable; the 256 checkpoint also has worse validation loss.",
+  "default_validation": {
+    "generated_files_unchanged": true,
+    "format_lint_types": "passed",
+    "unit_tests_passed": 12,
+    "cli_examples": "passed",
+    "repeated_hover_log": "$ node scripts/check-hover.ts \u2298 cache disabled\nok   hover 1 (7.8s): \"Once upon a time, there was a proble whise. The little girl was s\"\nok   hover 2 (7.4s): \"Tom and Lily went to the story and said, \\\"I want to see the story\"\nok   hover 3 (7.4s): \"The little dog was sad.\\nThe tree was a little boy. The people was\"\n\n"
+  }
+}

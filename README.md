@@ -214,6 +214,61 @@ instantiations. With a budget reset before every block it now runs to the full
 64-character context, also on repeated hovers. A 16-layer, 32-dimension model
 (untrained, built to bisect the limit) does too.
 
+### Longer context on Colab
+
+The 4-layer, 64-dimension model was also trained with 128- and 256-character
+contexts on a Colab Tesla T4, using the same 14,000-step recipe and seed 1337.
+Both runs completed; their checkpoints and full training logs are saved here.
+
+| Context | Loss on shared targets (nats/char) | Checkpoint                            |
+| ------- | ---------------------------------- | ------------------------------------- |
+| 64      | 1.1064                             | [Default](model/qat.json)             |
+| 128     | 1.0732                             | [Experimental](model/context128.json) |
+| 256     | 1.5824                             | [Experimental](model/context256.json) |
+
+`scripts/evaluate-context.ts` scores the same 4,096 target characters for all
+three models: the last 64 predictions in each of 64 fixed validation windows.
+Each model receives its own context length. This avoids comparing different
+random validation batches. The 128-context checkpoint scores about 3% better;
+the 256-context checkpoint scores about 43% worse. These are single training
+runs on validation data, not a separate test set or evidence that context alone
+caused the difference. [Evaluation outputs](experiments/context-128.json) include
+sampled and greedy text, checkpoint hashes and a hash of the normalized validation
+text; [training logs](experiments/context-training.json) include the training-script
+hash. The runs took about 43 and 86 minutes, partly sharing the GPU.
+
+The compiled reference matches PyTorch's **float64** integer simulation at all
+8,192 checked positions for 128 context and all 16,384 for 256 context. Float32
+and float64 do not produce identical accumulators for these checkpoints
+(6,976 and 16,198 positions differ respectively). The full-window float64
+validation losses are 1.1534 and 1.6221; those averages include the early
+predictions with little context and are different from the shared-target table.
+
+The **64-context model remains the default**. With the 128 checkpoint, two
+full-context hovers in one server session match the reference, but the third
+returns `never`; the same third prompt works in a fresh server. These checkpoints
+are experimental: all three full-context hovers fail for the 256 checkpoint,
+starting with `any` even in a fresh server. A successful fresh hover is not
+sufficient evidence of editor reliability. The attempted budget-reset and materialization changes did
+not fix that regression and were not included in the engine.
+
+To reproduce in a scratch checkout (compilation regenerates tracked files):
+
+```sh
+QAT=model/context128.json vp run compile
+QAT=model/context128.json PARITY_WINDOWS=64 vp run parity
+QAT=model/context128.json node scripts/evaluate-context.ts
+vp run check:hover  # exposes the repeated-hover failure
+
+# Restore the default model and its parity vectors afterward.
+vp run compile
+vp run parity
+```
+
+Use `model/context256.json` for the 256-context run. The checked-in evaluation
+outputs are [64](experiments/context-64.json), [128](experiments/context-128.json)
+and [256](experiments/context-256.json).
+
 ## The playbook, triaged
 
 How the 2025–26 inference playbook maps onto a type checker. Its "hardware" is
